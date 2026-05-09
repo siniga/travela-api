@@ -33,6 +33,10 @@ Route::prefix('public')->group(function () {
     // FAKE / TEST ONLY: remove after testing
     Route::post('/orders/{orderId}/payment-paid-test', [OrderController::class, 'paymentPaidTest']);
 
+    // Vodacom callbacks
+    Route::post('/sims-balances/callback', [EsimController::class, 'simsBalancesCallback']);
+    Route::post('/my-recharge-callback-url', [EsimController::class, 'rechargeCallback']);
+
     
 //kyc
   Route::get('/kyc', [KycController::class, 'show']);     // get my KYC
@@ -61,6 +65,7 @@ Route::prefix('esim')->middleware(['auth:sanctum', 'admin'])->group(function () 
   Route::get('/usage-details', [EsimController::class, 'usageDetails']);
   Route::get('/recharges', [EsimController::class, 'recharges']);
   Route::post('/recharge', [EsimController::class, 'recharge']);
+  Route::get('/sims-balances', [EsimController::class, 'simsBalances']);
 });
 
 Route::prefix('me')->middleware('auth:sanctum')->group(function () {

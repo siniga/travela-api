@@ -6,7 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\EsimActivateRequest;
 use App\Http\Requests\EsimRechargeRequest;
 use App\Http\Requests\EsimSuspendRequest;
+use App\Models\Esim;
+use App\Models\UserEsim;
 use App\Services\VodacomSimManagerService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class EsimController extends Controller
@@ -106,6 +109,72 @@ class EsimController extends Controller
         $payload = array_filter($payload, fn ($v) => ! is_null($v) && $v !== '');
 
         return $this->proxy($this->vodacom->post('/api/recharge', [], $payload));
+    }
+
+    public function simsBalances(Request $request)
+    {
+        $query = array_filter($request->only(['msisdn', 'iccid', 'imsi']), fn ($v) => ! is_null($v) && $v !== '');
+        return $this->proxy($this->vodacom->get('/api/sims-balances', $query));
+    }
+
+    public function rechargeCallback(Request $request): JsonResponse
+    {
+        $request->validate([
+            'msisdn'    => 'required|string',
+            'amount'    => 'required|numeric',
+            'status'    => 'sometimes|string|max:30',
+            'reference' => 'sometimes|string|max:100',
+        ]);
+
+        $esim = Esim::where('msisdn', $request->msisdn)->first();
+
+        if (! $esim) {
+            return response()->json(['success' => false, 'message' => 'SIM not found'], 404);
+        }
+
+        $assignment = UserEsim::where('esim_id', $esim->id)->first();
+
+        if (! $assignment) {
+            return response()->json(['success' => false, 'message' => 'No user assignment for this SIM'], 404);
+        }
+
+        $assignment->update([
+            'last_recharge_amount'    => $request->amount,
+            'last_recharge_reference' => $request->input('reference'),
+            'last_recharge_status'    => $request->input('status', 'SUCCESS'),
+            'last_recharged_at'       => now(),
+        ]);
+
+        return response()->json(['success' => true, 'message' => 'Recharge recorded']);
+    }
+
+    public function simsBalancesCallback(Request $request): JsonResponse
+    {
+        $request->validate([
+            'msisdn'   => 'required|string',
+            'balance'  => 'required|numeric',
+            'currency' => 'sometimes|string|max:10',
+        ]);
+
+        $esim = Esim::where('msisdn', $request->msisdn)->first();
+
+        if (! $esim) {
+            return response()->json(['success' => false, 'message' => 'SIM not found'], 404);
+        }
+
+        $assignment = UserEsim::where('esim_id', $esim->id)->first();
+
+        if (! $assignment) {
+            return response()->json(['success' => false, 'message' => 'No user assignment for this SIM'], 404);
+        }
+
+        $assignment->update([
+            'balance'            => $request->balance,
+            'balance_currency'   => $request->input('currency', 'TZS'),
+            'balance_fetched_at' => now(),
+        ]);
+
+        return response()->json(['success' => true, 'message' => 'Balance updated']);
     }
 
     private function proxy($vodacomResponse)
