@@ -5,284 +5,120 @@ namespace Database\Seeders;
 use App\Models\Bundle;
 use App\Models\BundleType;
 use App\Models\CountryProvider;
-use App\Models\Country;
-use App\Models\Provider;
 use Illuminate\Database\Seeder;
 
 class BundleSeeder extends Seeder
 {
     /**
-     * Run the database seeds.
+     * Travela storefront tiers (30‑day USD) + optional larger SIM SKUs.
+     *
+     * Verified Vodacom/sim product IDs:
+     * - 3232 → 10 GB, 3233 → 15 GB, 3234 → 30 GB, 28 → 50 GB
+     *
+     * Also used (legacy catalog / placeholders — confirm via SIM product API):
+     * - Starter 1 GB → 25 (nearest 30d plan in legacy seed data)
+     * - Explorer 3 GB → 3231, Traveller 5 GB → 3230 (DataPre 5 GB)
      */
     public function run(): void
     {
-        // Get bundle types
         $dataType = BundleType::where('code', 'DATA')->first();
-        $voiceType = BundleType::where('code', 'VOICE')->first();
-        $smsType = BundleType::where('code', 'SMS')->first();
-        $comboType = BundleType::where('code', 'COMBO')->first();
 
-        // Get countries
-        $tanzania = Country::where('iso2', 'TZ')->first();
-        $kenya = Country::where('iso2', 'KE')->first();
-
-        // Get providers
-        $ttcl = Provider::where('slug', 'ttcl')->first();
-        $airtel = Provider::where('slug', 'airtel')->first();
-        $vodacom = Provider::where('slug', 'vodacom')->first();
-        $safaricom = Provider::where('slug', 'safaricom')->first();
-
-        // Tanzania - TTCL Bundles
-        if ($tanzania && $ttcl) {
-            $tz_ttcl = CountryProvider::where('country_id', $tanzania->id)
-                ->where('provider_id', $ttcl->id)
-                ->first();
-
-            if ($tz_ttcl && $dataType) {
-                // Daily data bundles
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $tz_ttcl->id, 'name' => 'Daily 500MB'],
-                    [
-                        'bundle_type_id' => $dataType->id,
-                        'validity_days' => 1,
-                        'data_mb' => 500,
-                        'price' => 1000.00,
-                        'currency' => 'TZS',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => false])
-                    ]
-                );
-
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $tz_ttcl->id, 'name' => 'Daily 1GB'],
-                    [
-                        'bundle_type_id' => $dataType->id,
-                        'validity_days' => 1,
-                        'data_mb' => 1024,
-                        'price' => 2000.00,
-                        'currency' => 'TZS',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => false])
-                    ]
-                );
-
-                // Weekly data bundles
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $tz_ttcl->id, 'name' => 'Weekly 3GB'],
-                    [
-                        'bundle_type_id' => $dataType->id,
-                        'validity_days' => 7,
-                        'data_mb' => 3072,
-                        'price' => 5000.00,
-                        'currency' => 'TZS',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => false])
-                    ]
-                );
-
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $tz_ttcl->id, 'name' => 'Weekly 10GB'],
-                    [
-                        'bundle_type_id' => $dataType->id,
-                        'validity_days' => 7,
-                        'data_mb' => 10240,
-                        'price' => 15000.00,
-                        'currency' => 'TZS',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => false])
-                    ]
-                );
-
-                // Monthly data bundles
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $tz_ttcl->id, 'name' => 'Monthly 20GB'],
-                    [
-                        'bundle_type_id' => $dataType->id,
-                        'validity_days' => 30,
-                        'data_mb' => 20480,
-                        'price' => 25000.00,
-                        'currency' => 'TZS',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => false])
-                    ]
-                );
-
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $tz_ttcl->id, 'name' => 'Monthly 50GB'],
-                    [
-                        'bundle_type_id' => $dataType->id,
-                        'validity_days' => 30,
-                        'data_mb' => 51200,
-                        'price' => 50000.00,
-                        'currency' => 'TZS',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => false])
-                    ]
-                );
-            }
-
-            // Combo bundles
-            if ($tz_ttcl && $comboType) {
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $tz_ttcl->id, 'name' => 'Weekly Combo'],
-                    [
-                        'bundle_type_id' => $comboType->id,
-                        'validity_days' => 7,
-                        'data_mb' => 5120,
-                        'voice_minutes' => 100,
-                        'sms' => 100,
-                        'price' => 12000.00,
-                        'currency' => 'TZS',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => false])
-                    ]
-                );
-
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $tz_ttcl->id, 'name' => 'Monthly Super Combo'],
-                    [
-                        'bundle_type_id' => $comboType->id,
-                        'validity_days' => 30,
-                        'data_mb' => 30720,
-                        'voice_minutes' => 500,
-                        'sms' => 500,
-                        'price' => 40000.00,
-                        'currency' => 'TZS',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => false])
-                    ]
-                );
-            }
-
-            // Voice only bundles
-            if ($tz_ttcl && $voiceType) {
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $tz_ttcl->id, 'name' => 'Daily 30 Minutes'],
-                    [
-                        'bundle_type_id' => $voiceType->id,
-                        'validity_days' => 1,
-                        'voice_minutes' => 30,
-                        'price' => 1500.00,
-                        'currency' => 'TZS',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => false])
-                    ]
-                );
-            }
+        if (! $dataType) {
+            $dataType = BundleType::create([
+                'code' => 'DATA',
+                'name' => 'Data only',
+            ]);
         }
 
-        // Tanzania - Vodacom Bundles
-        if ($tanzania && $vodacom) {
-            $tz_vodacom = CountryProvider::where('country_id', $tanzania->id)
-                ->where('provider_id', $vodacom->id)
-                ->first();
+        $pivot = CountryProvider::where('is_default', true)->first()
+            ?? CountryProvider::query()->first();
 
-            if ($tz_vodacom && $dataType) {
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $tz_vodacom->id, 'name' => 'Daily 1GB Special'],
-                    [
-                        'bundle_type_id' => $dataType->id,
-                        'validity_days' => 1,
-                        'data_mb' => 1024,
-                        'price' => 1800.00,
-                        'currency' => 'TZS',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => true])
-                    ]
-                );
+        if (! $pivot) {
+            $this->command->warn('No CountryProvider row found. Seed CountryProviderSeeder before BundleSeeder.');
 
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $tz_vodacom->id, 'name' => 'Weekly 15GB'],
-                    [
-                        'bundle_type_id' => $dataType->id,
-                        'validity_days' => 7,
-                        'data_mb' => 15360,
-                        'price' => 18000.00,
-                        'currency' => 'TZS',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => false])
-                    ]
-                );
-
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $tz_vodacom->id, 'name' => 'Monthly 100GB'],
-                    [
-                        'bundle_type_id' => $dataType->id,
-                        'validity_days' => 30,
-                        'data_mb' => 102400,
-                        'price' => 80000.00,
-                        'currency' => 'TZS',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => false])
-                    ]
-                );
-            }
+            return;
         }
 
-        // Kenya - Safaricom Bundles
-        if ($kenya && $safaricom) {
-            $ke_safaricom = CountryProvider::where('country_id', $kenya->id)
-                ->where('provider_id', $safaricom->id)
-                ->first();
+        $currency = 'USD';
+        /** Larger data SKUs tied to verified sim_bundle_id values (inactive until you publish pricing). */
+        $simOnlyBundles = [
+            [
+                'alias' => 'Nomad',
+                'name' => 'Nomad 10GB',
+                'bundle_size' => 10,
+                'validity_days' => 30,
+                'price' => 90.00,
+                'sim_bundle_id' => 3232,
+                'unit' => 'GB',
+                'active' => true,
+            ],
+            [
+                'name' => '15GB (30 days)',
+                'bundle_size' => 15,
+                'validity_days' => 30,
+                'price' => 120.00,
+                'sim_bundle_id' => 3233,
+                'unit' => 'GB',
+                'active' => false,
+            ],
+            [
+                'name' => '30GB (30 days)',
+                'bundle_size' => 30,
+                'validity_days' => 30,
+                'price' => 200.00,
+                'sim_bundle_id' => 3234,
+                'unit' => 'GB',
+                'active' => false,
+            ],
+            [
+                'name' => '50GB (30 days)',
+                'bundle_size' => 50,
+                'validity_days' => 30,
+                'price' => 320.00,
+                'sim_bundle_id' => 28,
+                'unit' => 'GB',
+                'active' => false,
+            ],
+        ];
 
-            if ($ke_safaricom && $dataType) {
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $ke_safaricom->id, 'name' => 'Daily 1GB'],
-                    [
-                        'bundle_type_id' => $dataType->id,
-                        'validity_days' => 1,
-                        'data_mb' => 1024,
-                        'price' => 100.00,
-                        'currency' => 'KES',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => false])
-                    ]
-                );
+        $keepSimIds = array_map(fn (array $r) => $r['sim_bundle_id'], $simOnlyBundles);
 
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $ke_safaricom->id, 'name' => 'Weekly 6GB'],
-                    [
-                        'bundle_type_id' => $dataType->id,
-                        'validity_days' => 7,
-                        'data_mb' => 6144,
-                        'price' => 500.00,
-                        'currency' => 'KES',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => false])
-                    ]
-                );
+        // Ensure only these SIM bundles remain for this CountryProvider.
+        Bundle::query()
+            ->where('country_provider_id', $pivot->id)
+            ->where(function ($q) use ($keepSimIds) {
+                $q->whereNull('sim_bundle_id')
+                    ->orWhereNotIn('sim_bundle_id', $keepSimIds);
+            })
+            ->delete();
 
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $ke_safaricom->id, 'name' => 'Monthly 40GB'],
-                    [
-                        'bundle_type_id' => $dataType->id,
-                        'validity_days' => 30,
-                        'data_mb' => 40960,
-                        'price' => 2000.00,
-                        'currency' => 'KES',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => false])
-                    ]
-                );
-            }
 
-            if ($ke_safaricom && $comboType) {
-                Bundle::updateOrCreate(
-                    ['country_provider_id' => $ke_safaricom->id, 'name' => 'Monthly Mega Combo'],
-                    [
-                        'bundle_type_id' => $comboType->id,
-                        'validity_days' => 30,
-                        'data_mb' => 25600,
-                        'voice_minutes' => 300,
-                        'sms' => 300,
-                        'price' => 1500.00,
-                        'currency' => 'KES',
-                        'active' => true,
-                        'metadata' => json_encode(['promo' => false])
-                    ]
-                );
-            }
+        foreach ($simOnlyBundles as $row) {
+            Bundle::updateOrCreate(
+                [
+                    'country_provider_id' => $pivot->id,
+                    'sim_bundle_id' => $row['sim_bundle_id'],
+                ],
+                array_merge($this->basePayload($dataType->id, $pivot->id, $currency), $row)
+            );
         }
     }
-}
 
+    /**
+     * @return array<string, mixed>
+     */
+    private function basePayload(int $bundleTypeId, int $countryProviderId, string $currency): array
+    {
+        return [
+            'bundle_type_id' => $bundleTypeId,
+            'country_provider_id' => $countryProviderId,
+            'network_id' => null,
+            'external_id' => null,
+            'voice_minutes' => null,
+            'sms' => null,
+            'product_code' => null,
+            'currency' => $currency,
+            'metadata' => ['source' => 'BundleSeeder'],
+        ];
+    }
+}

@@ -51,8 +51,14 @@ class UserSeeder extends Seeder
             ]
         );
 
-        // Create additional random users
-        User::factory(10)->create();
+        User::updateOrCreate(
+            ['email' => 'sarah.lee@example.com'],
+            [
+                'name' => 'Sarah Lee',
+                'password' => Hash::make('password123'),
+                'email_verified_at' => now(),
+            ]
+        );
     }
 }
 

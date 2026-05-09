@@ -9,12 +9,14 @@ use App\Http\Controllers\PasswordResetController;
 use App\Http\Controllers\KycController;
 use App\Http\Controllers\CountryController;
 use App\Http\Controllers\BundleTypeController;
+use App\Http\Controllers\BundleController;
 use App\Http\Controllers\ProviderController;
 use App\Http\Controllers\OrderController;  
-use App\Services\SelcomService;
-
-
-Http::get('https://google.com')->successful();
+use App\Http\Controllers\EvPayController;
+use App\Http\Controllers\RevenueDashboard;
+use App\Http\Controllers\Api\EsimController;
+use App\Http\Controllers\Api\UserEsimController;
+use App\Http\Controllers\Api\AdminUserEsimController;
 
 
 Route::prefix('auth')->group(function () {
@@ -28,6 +30,10 @@ Route::prefix('auth')->group(function () {
 });
 
 Route::prefix('public')->group(function () {
+    // FAKE / TEST ONLY: remove after testing
+    Route::post('/orders/{orderId}/payment-paid-test', [OrderController::class, 'paymentPaidTest']);
+
+    
 //kyc
   Route::get('/kyc', [KycController::class, 'show']);     // get my KYC
   Route::post('/kyc', [KycController::class, 'store']);   // create/update
@@ -38,117 +44,66 @@ Route::prefix('public')->group(function () {
   Route::get('/countries/{iso2}/providers', [CountryController::class, 'providers']);
 
   Route::get('/bundle-types', [BundleTypeController::class, 'index']);
+  Route::get('/bundles', [BundleController::class, 'index']); // ?active=1
   Route::get('/providers/{provider}/bundles', [ProviderController::class, 'bundles']); // ?country=TZ&type=DATA&active=1
   
-  //orders
- Route::post('/preorders/drafts', [OrderController::class, 'storeDraft']);  
+});
+
+// Admin/system Vodacom proxy routes (do not use for normal customer dashboard)
+Route::prefix('esim')->middleware(['auth:sanctum', 'admin'])->group(function () {
+  Route::get('/organisation/balance', [EsimController::class, 'organisationBalance']);
+  Route::get('/networks', [EsimController::class, 'networks']);
+  Route::get('/products', [EsimController::class, 'products']);
+  Route::get('/sims', [EsimController::class, 'sims']);
+  Route::post('/sims/activate', [EsimController::class, 'activate']);
+  Route::post('/sims/suspend', [EsimController::class, 'suspend']);
+  Route::get('/usage', [EsimController::class, 'usage']);
+  Route::get('/usage-details', [EsimController::class, 'usageDetails']);
+  Route::get('/recharges', [EsimController::class, 'recharges']);
+  Route::post('/recharge', [EsimController::class, 'recharge']);
+});
+
+Route::prefix('me')->middleware('auth:sanctum')->group(function () {
+  Route::get('/esims', [UserEsimController::class, 'index']);
+  Route::get('/recharges', [UserEsimController::class, 'recharges']);
+  Route::get('/usage', [UserEsimController::class, 'usage']);
+  Route::get('/usage-details', [UserEsimController::class, 'usageDetails']);
+  Route::post('/recharge', [UserEsimController::class, 'recharge']);
+});
+
+Route::prefix('admin')->middleware(['auth:sanctum', 'admin'])->group(function () {
+  Route::get('/user-esims', [AdminUserEsimController::class, 'index']);
+  Route::post('/user-esims', [AdminUserEsimController::class, 'store']);
+  Route::delete('/user-esims/{id}', [AdminUserEsimController::class, 'destroy']);
+  Route::post('/user-esims/sync-from-vodacom', [AdminUserEsimController::class, 'syncFromVodacom']);
+
+  // Orders (admin)
+  Route::get('/orders', [OrderController::class, 'getOrders']);
+
+  // Dashboard (admin)
+  Route::get('/dashboard/stats', [RevenueDashboard::class, 'stats']);
 });
 
 
 Route::middleware(['auth:sanctum', 'verified'])->group(function () {
-  Route::get('/me', [AuthController::class, 'me']);
   Route::post('/logout', [AuthController::class, 'logout']);
+
+  // Orders (merged create / checkout)
+  Route::post('/orders', [OrderController::class, 'storeOrder']);
 
   // Order routes
   // routes/api.php
-  Route::post('/orders/finalize', [OrderController::class, 'finalizeOrder']);
-
   Route::get('/orders/{draft_id}', [OrderController::class, 'show']);
   Route::put('/orders/{draft_id}', [OrderController::class, 'update']);
   Route::delete('/orders/{draft_id}', [OrderController::class, 'destroy']);
+
+  
+  Route::post('/orders/{orderId}/prepare-evpay', [EvPayController::class, 'preparePayment']);
+  Route::post('/orders/{orderId}/evpay-checkout-url', [EvPayController::class, 'createCheckoutUrl']);
 });
 
-// Http::withoutVerifying()->get('selcom-api-url');
-Route::get('/selcom-test', function (SelcomService $selcom) {
-    try {
-        // 1. Prepare dummy order data required by Selcom
-        $data = [
-            'vendor' => config('services.selcom.vendor'),
-            'order_id' => uniqid(),
-            'buyer_email' => 'peterkhamis5@gmail.com',
-            'buyer_name'  => 'Test User',
-            'buyer_phone' => '255768632087',
-            'amount'      => 1000,
-            'currency'    => 'TZS',
-            'payment_methods' => 'ALL',
-            'redirect_url' => base64_encode('https://thetravela.com/return'),
-            'cancel_url'   => base64_encode('https://thetravela.com/cancel'),
-            'no_of_items' => 1,
-            'billing' => [
-                'firstname' => 'Test',
-                'lastname'  => 'User',
-                'address_1' => '123 Test St',
-                'city'      => 'Dar es Salaam',
-                'state_or_region' => 'Dar es Salaam',
-                'postcode_or_pobox' => '00000',
-                'country' => 'Tanzania',
-                'phone' => '255700000000',
-            ],
-            'buyer_remarks' => 'None',
-            'merchant_remarks' => 'None',
-        ];
+// Authenticated user info (no email verification required)
+Route::middleware('auth:sanctum')->get('/me', [AuthController::class, 'me']);
 
-        // 2. Call the createOrder method
-        $response = $selcom->createOrder($data);
-        $body = $response->json();
 
-        // 3. Handle response
-        if ($response->successful() && ($body['result'] ?? '') === 'SUCCESS') {
-            $encodedUrl = $body['data'][0]['payment_gateway_url'] ?? null;
-            
-            if ($encodedUrl) {
-                return response()->json([
-                    'status' => 'success',
-                    'payment_url' => base64_decode($encodedUrl),
-                    'reference' => $body['reference'] ?? null,
-                    'transid' => $data['order_id']
-                ]);
-            }
-        }
 
-        // Return error details if something failed
-        return response()->json([
-            'status' => 'error',
-            'message' => $body['message'] ?? 'Unknown error',
-            'debug' => $body
-        ], 400);
-
-    } catch (\Exception $e) {
-        return response()->json([
-            'status' => 'error',
-            'message' => $e->getMessage()
-        ], 500);
-    }
-});
-
-Route::get('/selcom-raw', function (SelcomService $selcom) {
-    $data = [
-        'vendor' => config('services.selcom.vendor'),
-        'order_id' => uniqid(),
-        'buyer_email' => 'test@example.com',
-        'buyer_name'  => 'Test User',
-        'buyer_phone' => '255700000000',
-        'amount'      => 1000,
-        'currency'    => 'TZS',
-        'payment_methods' => 'ALL',
-        'redirect_url' => base64_encode('https://google.com'),
-        'cancel_url'   => base64_encode('https://google.com'),
-        'no_of_items' => 1,
-        'billing' => [
-            'firstname' => 'Test',
-            'lastname'  => 'User',
-            'address_1' => '123 Test St',
-            'city'      => 'Dar es Salaam',
-            'state_or_region' => 'Dar es Salaam',
-            'postcode_or_pobox' => '00000',
-            'country' => 'Tanzania',
-            'phone' => '255700000000',
-        ],
-        'buyer_remarks' => 'None',
-        'merchant_remarks' => 'None',
-    ];
-
-    $response = $selcom->createOrder($data);
-
-    return $response->json();
-});

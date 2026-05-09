@@ -6,8 +6,25 @@ use Illuminate\Database\Eloquent\Model;
 
 class Bundle extends Model {
     protected $fillable = [
-      'bundle_type_id','country_provider_id','name','validity_days',
-      'data_mb','voice_minutes','sms','price','currency','active','metadata'
+      'external_id',
+      'sim_bundle_id',
+      'bundle_type_id',
+      'country_provider_id',
+      'network_id',
+      'name',
+      'alias',
+      'validity_days',
+      'data_mb',
+      'voice_minutes',
+      'sms',
+      'price',
+      'currency',
+      'bundle_size',
+      'bundle_size_in_mb',
+      'unit',
+      'product_code',
+      'active',
+      'metadata'
     ];
     protected $casts = ['metadata' => 'array', 'active' => 'boolean'];
     public function type(){ return $this->belongsTo(BundleType::class, 'bundle_type_id'); }

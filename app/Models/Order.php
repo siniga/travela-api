@@ -20,7 +20,14 @@ class Order extends Model
         'currency',
         'source',
         'platform',
-        'metadata'
+        'metadata',
+        'payment_reference',
+        'payment_gateway',
+        'gateway_payment_id',
+        'payment_status',
+        'payment_payload',
+        'payment_callback',
+        'paid_at',
     ];
 
     protected $casts = [

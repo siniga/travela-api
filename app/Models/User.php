@@ -20,6 +20,7 @@ class User extends Authenticatable implements MustVerifyEmail
     protected $fillable = [
         'name',
         'email',
+        'role',
         'password',
         'reset_code',
         'reset_code_expires_at',
@@ -57,4 +58,18 @@ class User extends Authenticatable implements MustVerifyEmail
 
     public function kyc(){ return $this->hasOne(Kyc::class); }
     public function orders(){ return $this->hasMany(Order::class); }
+    public function esims()
+    {
+        return $this->hasMany(UserEsim::class);
+    }
+
+    public function isAdmin(): bool
+    {
+        return $this->role === 'admin';
+    }
+
+    public function isUser(): bool
+    {
+        return $this->role === 'user';
+    }
 }

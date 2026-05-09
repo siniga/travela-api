@@ -19,7 +19,8 @@ class StorePreorderDraftRequest extends FormRequest
           'trip.duration_days'       => ['required','integer','min:1'],
     
           'items'               => ['required','array','min:1'],
-          'items.*.type'        => ['required','in:bundle,addon'],
+          // order_items.type enum is ['bundle','service'] in the database.
+          'items.*.type'        => ['required','in:bundle,service'],
           'items.*.bundle_id'   => ['required_if:items.*.type,bundle','integer'],
           'items.*.bundle_name' => ['required','string','max:120'],
           'items.*.data_amount' => ['nullable','integer','min:0'],

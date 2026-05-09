@@ -16,6 +16,7 @@ class AuthController extends Controller
         $user = User::create([
             'name' => $req->name,
             'email' => $req->email,
+            'role' => 'user',
             'password' => Hash::make($req->password),
         ]);
 
@@ -35,7 +36,7 @@ class AuthController extends Controller
         $token = $user->createToken($req->device ?? 'mobile')->plainTextToken;
 
         return response()->json([
-            'user'  => $user,
+            'user'  => $this->userPayload($user),
             'token' => $token,
             'email_verification_required' => true
         ], 201);
@@ -55,19 +56,28 @@ class AuthController extends Controller
         $token = $user->createToken($req->device ?? 'mobile')->plainTextToken;
 
         return response()->json([
-            'user'  => $user,
+            'user'  => $this->userPayload($user),
             'token' => $token,
             'email_verified' => ! is_null($user->email_verified_at),
         ]);
     }
 
     public function me(Request $req) {
-        return response()->json(['user' => $req->user()]);
+        return response()->json(['user' => $this->userPayload($req->user())]);
     }
 
     public function logout(Request $req) {
         // revoke current token only
         $req->user()->currentAccessToken()->delete();
         return response()->json(['message' => 'Logged out']);
+    }
+
+    private function userPayload(?User $user): ?array
+    {
+        if (! $user) {
+            return null;
+        }
+
+        return $user->only(['id', 'name', 'email', 'role']);
     }
 }

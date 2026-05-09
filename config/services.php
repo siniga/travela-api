@@ -13,12 +13,21 @@ return [
     | a conventional file to locate the various service credentials.
     |
     */
-    'selcom' => [
-        'key'    => env('SELCOM_API_KEY'),
-        'secret' => env('SELCOM_API_SECRET'),
-        'url'    => env('SELCOM_BASE_URL'),
-        'vendor' => env('SELCOM_VENDOR_ID'),
-    ],
+   'evpay' => [
+    'merchant_id' => env('EVPAY_MERCHANT_ID'),
+    'secret_key' => env('EVPAY_SECRET_KEY'),
+    'checkout_url' => env('EVPAY_CHECKOUT_URL', 'https://checkout.evmak.com/checkout'),
+   ],
+
+   'fx' => [
+        // TZS per 1 USD (used when returning bundles in USD)
+        'tzs_to_usd_rate' => (float) env('TZS_TO_USD_RATE', 2500),
+   ],
+
+   'vodacom_sim' => [
+        'base_url' => env('VODACOM_SIM_BASE_URL'),
+        'api_key' => env('VODACOM_SIM_API_KEY'),
+   ],
 
     'postmark' => [
         'token' => env('POSTMARK_TOKEN'),
