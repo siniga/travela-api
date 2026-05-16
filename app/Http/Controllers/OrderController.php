@@ -14,6 +14,7 @@ use App\Models\Kyc;
 use App\Services\EvPayService;
 use App\Services\VodacomSimManagerService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class OrderController extends Controller
@@ -28,6 +29,32 @@ class OrderController extends Controller
     public function getOrders(): JsonResponse
     {
         $orders = Order::with(['trip', 'orderItems.bundle', 'user', 'kyc'])
+            ->orderByDesc('id')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $orders,
+        ]);
+    }
+
+    public function myOrders(Request $request): JsonResponse
+    {
+        $orders = Order::with(['trip', 'orderItems.bundle', 'kyc'])
+            ->where('user_id', $request->user()->id)
+            ->orderByDesc('id')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $orders,
+        ]);
+    }
+
+    public function getOrdersByUser(int $userId): JsonResponse
+    {
+        $orders = Order::with(['trip', 'orderItems.bundle', 'user', 'kyc'])
+            ->where('user_id', $userId)
             ->orderByDesc('id')
             ->get();
 

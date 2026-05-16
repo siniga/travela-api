@@ -4,14 +4,39 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Esim;
+use App\Models\User;
 use App\Models\UserEsim;
 use App\Services\VodacomSimManagerService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class AdminUserEsimController extends Controller
 {
     public function __construct(private readonly VodacomSimManagerService $vodacom)
     {
+    }
+
+    /**
+     * Return every user with a count of how many eSIMs they hold on the platform.
+     */
+    public function userEsimCounts(): JsonResponse
+    {
+        $counts = User::select('id', 'name', 'email')
+            ->withCount('esims')
+            ->orderByDesc('esims_count')
+            ->get()
+            ->map(fn (User $u) => [
+                'user_id'    => $u->id,
+                'name'       => $u->name,
+                'email'      => $u->email,
+                'esim_count' => $u->esims_count,
+            ]);
+
+        return response()->json([
+            'success' => true,
+            'total_assigned' => $counts->sum('esim_count'),
+            'data' => $counts,
+        ]);
     }
 
     public function index()

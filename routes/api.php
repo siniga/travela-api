@@ -69,6 +69,7 @@ Route::prefix('esim')->middleware(['auth:sanctum', 'admin'])->group(function () 
 });
 
 Route::prefix('me')->middleware('auth:sanctum')->group(function () {
+  Route::get('/orders', [OrderController::class, 'myOrders']);
   Route::get('/esims', [UserEsimController::class, 'index']);
   Route::get('/recharges', [UserEsimController::class, 'recharges']);
   Route::get('/usage', [UserEsimController::class, 'usage']);
@@ -78,12 +79,14 @@ Route::prefix('me')->middleware('auth:sanctum')->group(function () {
 
 Route::prefix('admin')->middleware(['auth:sanctum', 'admin'])->group(function () {
   Route::get('/user-esims', [AdminUserEsimController::class, 'index']);
+  Route::get('/user-esims/counts', [AdminUserEsimController::class, 'userEsimCounts']);
   Route::post('/user-esims', [AdminUserEsimController::class, 'store']);
   Route::delete('/user-esims/{id}', [AdminUserEsimController::class, 'destroy']);
   Route::post('/user-esims/sync-from-vodacom', [AdminUserEsimController::class, 'syncFromVodacom']);
 
   // Orders (admin)
   Route::get('/orders', [OrderController::class, 'getOrders']);
+  Route::get('/users/{userId}/orders', [OrderController::class, 'getOrdersByUser']);
 
   // Dashboard (admin)
   Route::get('/dashboard/stats', [RevenueDashboard::class, 'stats']);
