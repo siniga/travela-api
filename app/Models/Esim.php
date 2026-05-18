@@ -19,5 +19,19 @@ class Esim extends Model
     protected $casts = [
         'network_id' => 'integer',
     ];
+
+    public static function normalizeMsisdn(string $msisdn): string
+    {
+        return ltrim(preg_replace('/\s+/', '', trim($msisdn)), '+');
+    }
+
+    public static function findByMsisdn(string $msisdn): ?self
+    {
+        $normalized = self::normalizeMsisdn($msisdn);
+
+        return static::query()
+            ->whereIn('msisdn', [$normalized, '+'.$normalized])
+            ->first();
+    }
 }
 

@@ -126,7 +126,7 @@ class EsimController extends Controller
             'reference' => 'sometimes|string|max:100',
         ]);
 
-        $esim = Esim::where('msisdn', $request->msisdn)->first();
+        $esim = Esim::findByMsisdn($request->msisdn);
 
         if (! $esim) {
             return response()->json(['success' => false, 'message' => 'SIM not found'], 404);
@@ -151,12 +151,16 @@ class EsimController extends Controller
     public function simsBalancesCallback(Request $request): JsonResponse
     {
         $request->validate([
-            'msisdn'   => 'required|string',
-            'balance'  => 'required|numeric',
-            'currency' => 'sometimes|string|max:10',
+            'msisdn'           => 'required|string',
+            'balances'         => 'required_without:balance|array',
+            'balances.AIRTIME' => 'nullable|numeric',
+            'balances.DATA'    => 'nullable|numeric',
+            'balances.SMS'     => 'nullable|numeric',
+            'balance'          => 'required_without:balances|numeric',
+            'currency'         => 'sometimes|string|max:10',
         ]);
 
-        $esim = Esim::where('msisdn', $request->msisdn)->first();
+        $esim = Esim::findByMsisdn($request->msisdn);
 
         if (! $esim) {
             return response()->json(['success' => false, 'message' => 'SIM not found'], 404);
@@ -168,13 +172,34 @@ class EsimController extends Controller
             return response()->json(['success' => false, 'message' => 'No user assignment for this SIM'], 404);
         }
 
+        $balances = $request->has('balances')
+            ? $this->normalizeVodacomBalances($request->input('balances'))
+            : ['AIRTIME' => (float) $request->balance, 'DATA' => null, 'SMS' => null];
+
         $assignment->update([
-            'balance'            => $request->balance,
+            'balances'           => $balances,
+            'balance'            => $balances['AIRTIME'],
             'balance_currency'   => $request->input('currency', 'TZS'),
             'balance_fetched_at' => now(),
         ]);
 
         return response()->json(['success' => true, 'message' => 'Balance updated']);
+    }
+
+    /**
+     * @param  array<string, mixed>  $raw
+     * @return array{AIRTIME: float|null, DATA: float|null, SMS: float|null}
+     */
+    private function normalizeVodacomBalances(array $raw): array
+    {
+        $normalized = [];
+
+        foreach (['AIRTIME', 'DATA', 'SMS'] as $key) {
+            $value = $raw[$key] ?? null;
+            $normalized[$key] = ($value === null || $value === '') ? null : (float) $value;
+        }
+
+        return $normalized;
     }
 
     private function proxy($vodacomResponse)

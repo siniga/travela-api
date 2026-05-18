@@ -12,6 +12,7 @@ class UserEsim extends Model
         'balance',
         'balance_currency',
         'balance_fetched_at',
+        'balances',
         'last_recharge_amount',
         'last_recharge_reference',
         'last_recharge_status',
@@ -21,6 +22,7 @@ class UserEsim extends Model
     protected $casts = [
         'balance'              => 'decimal:2',
         'balance_fetched_at'   => 'datetime',
+        'balances'             => 'array',
         'last_recharge_amount' => 'decimal:2',
         'last_recharged_at'    => 'datetime',
     ];
