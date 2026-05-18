@@ -3,8 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\Order;
-use Illuminate\Http\Request;
 use App\Services\EvPayService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class EvPayController extends Controller
 {
@@ -46,5 +47,19 @@ class EvPayController extends Controller
                 'message' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    public function callback(Request $request): JsonResponse
+    {
+        $result = $this->evpay->handleCallback($request);
+
+        $status = match (true) {
+            ! ($result['success'] ?? false) && str_contains($result['message'] ?? '', 'signature') => 403,
+            ! ($result['success'] ?? false) && str_contains($result['message'] ?? '', 'not found') => 404,
+            ! ($result['success'] ?? false) => 422,
+            default => 200,
+        };
+
+        return response()->json($result, $status);
     }
 }

@@ -35,8 +35,11 @@ class Order extends Model
         'discount_amount' => 'decimal:2',
         'total_amount' => 'decimal:2',
         'metadata' => 'array',
+        'payment_payload' => 'array',
+        'payment_callback' => 'array',
+        'paid_at' => 'datetime',
         'created_at' => 'datetime',
-        'updated_at' => 'datetime'
+        'updated_at' => 'datetime',
     ];
 
     /**

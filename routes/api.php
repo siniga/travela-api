@@ -29,6 +29,9 @@ Route::prefix('auth')->group(function () {
     ->middleware('auth:sanctum');
 });
 
+// EvPay server callback (no auth)
+Route::post('/payments/evpay/callback', [EvPayController::class, 'callback']);
+
 Route::prefix('public')->group(function () {
     // Vodacom callbacks
     Route::post('/sims-balances/callback', [EsimController::class, 'simsBalancesCallback']);
