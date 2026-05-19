@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Log;
 
 class OrderRechargeService
 {
-    private const FULFILLED_STATUSES = ['sent', 'success'];
+    private const FULFILLED_STATUSES = ['sent', 'success', 'queued'];
 
     public function __construct(
         private readonly VodacomSimManagerService $vodacom,
@@ -57,7 +57,7 @@ class OrderRechargeService
                 'skipped' => $this->rechargeableItems($order)->count(),
                 'failed' => 0,
                 'errors' => [],
-                'recharge_status' => 'completed',
+                'recharge_status' => 'success',
             ];
         }
 
@@ -166,29 +166,28 @@ class OrderRechargeService
                 $body = $response->json();
                 $responseBody = is_array($body) ? $body : ['raw' => (string) $response->body()];
                 $httpStatus = $response->status();
-                $itemStatus = $response->successful() ? 'sent' : 'pending_retry';
+                $vodacomStatus = $this->interpretVodacomRechargeStatus($httpStatus, $responseBody);
+
+                $this->logRechargeResponse($rechargeLog, $httpStatus, $responseBody, $vodacomStatus);
 
                 $this->persistItemRecharge($item, [
                     'reference' => $reference,
-                    'status' => $itemStatus,
+                    'recharge_reference' => $reference,
+                    'status' => $vodacomStatus,
                     'requested_at' => now()->toIso8601String(),
                     'http_status' => $httpStatus,
                     'payload' => $payload,
                     'response' => $responseBody,
+                    'recharge_response' => $responseBody,
                 ]);
 
-                if ($response->successful()) {
+                $this->updateOrderRechargeRecord($order, $reference, $responseBody, $vodacomStatus);
+
+                if ($response->successful() && in_array($vodacomStatus, ['success', 'queued', 'pending'], true)) {
                     $result['processed']++;
                 } else {
-                    Log::error('Vodacom order recharge API error', array_merge(
-                        $this->rechargeLogContext($order, $assignment, $item, $bundle, $payload),
-                        [
-                            'http_status' => $httpStatus,
-                            'response_body' => $responseBody,
-                        ]
-                    ));
                     $result['failed']++;
-                    $result['errors'][] = "Vodacom recharge failed for item {$item->id} (HTTP {$httpStatus}).";
+                    $result['errors'][] = "Vodacom recharge failed for item {$item->id} (HTTP {$httpStatus}, status {$vodacomStatus}).";
                 }
             } catch (\Throwable $e) {
                 Log::error('Order recharge request exception', array_merge(
@@ -231,7 +230,7 @@ class OrderRechargeService
             return $this->allRechargeableItemsFulfilled($order);
         }
 
-        if ($transactionRef && $storedRef === $transactionRef && ($meta['recharge_status'] ?? '') === 'completed') {
+        if ($transactionRef && $storedRef === $transactionRef && in_array($meta['recharge_status'] ?? '', ['completed', 'success', 'queued'], true)) {
             return $this->allRechargeableItemsFulfilled($order);
         }
 
@@ -501,6 +500,94 @@ class OrderRechargeService
     }
 
     /**
+     * @param  array<string, mixed>  $rechargeLog
+     * @param  array<string, mixed>  $responseBody
+     */
+    private function logRechargeResponse(
+        array $rechargeLog,
+        int $httpStatus,
+        array $responseBody,
+        string $vodacomStatus,
+    ): void {
+        $context = array_merge($rechargeLog, [
+            'http_status' => $httpStatus,
+            'vodacom_status' => $vodacomStatus,
+            'response_body' => $responseBody,
+        ]);
+
+        if ($httpStatus >= 200 && $httpStatus < 300 && in_array($vodacomStatus, ['success', 'queued', 'pending'], true)) {
+            Log::info('Vodacom recharge response received', $context);
+        } else {
+            Log::warning('Vodacom recharge response received', $context);
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $responseBody
+     */
+    private function interpretVodacomRechargeStatus(int $httpStatus, array $responseBody): string
+    {
+        if ($httpStatus < 200 || $httpStatus >= 300) {
+            return 'pending_retry';
+        }
+
+        if ($httpStatus === 202) {
+            return 'queued';
+        }
+
+        $statusText = strtolower((string) (
+            $responseBody['status']
+            ?? $responseBody['Status']
+            ?? $responseBody['state']
+            ?? ''
+        ));
+        $message = strtolower((string) ($responseBody['message'] ?? $responseBody['Message'] ?? ''));
+
+        if (
+            str_contains($message, 'queued')
+            || str_contains($statusText, 'queued')
+            || str_contains($message, 'callback')
+        ) {
+            return 'queued';
+        }
+
+        if (
+            in_array($statusText, ['success', 'successful', 'completed', 'complete', 'approved'], true)
+            || filter_var($responseBody['success'] ?? false, FILTER_VALIDATE_BOOLEAN)
+        ) {
+            return 'success';
+        }
+
+        if (in_array($statusText, ['pending', 'processing', 'in_progress', 'submitted'], true)) {
+            return 'pending';
+        }
+
+        if (str_contains($message, 'pending') || str_contains($message, 'processing')) {
+            return 'pending';
+        }
+
+        return 'success';
+    }
+
+    /**
+     * @param  array<string, mixed>  $responseBody
+     */
+    private function updateOrderRechargeRecord(
+        Order $order,
+        string $reference,
+        array $responseBody,
+        string $rechargeStatus,
+    ): void {
+        $meta = $this->orderMetadata($order);
+        $meta['recharge_reference'] = $reference;
+        $meta['recharge_response'] = $responseBody;
+        $meta['recharge_status'] = $rechargeStatus;
+        $meta['recharge_last_response_at'] = now()->toIso8601String();
+        $order->metadata = $meta;
+        $order->save();
+    }
+
+    /**
      * @param  array<string, mixed>|null  $payload
      * @param  array<string, mixed>  $extra
      * @return array<string, mixed>
@@ -648,12 +735,25 @@ class OrderRechargeService
             ->filter(fn (OrderItem $item) => ! $this->itemAlreadyFulfilled($item))
             ->count();
 
-        if ($pending === 0 && $result['processed'] > 0) {
-            return 'completed';
+        if ($pending > 0) {
+            return 'pending_retry';
         }
 
-        if ($pending === 0 && $result['skipped'] > 0) {
-            return 'completed';
+        $itemStatuses = $this->rechargeableItems($order)
+            ->map(fn (OrderItem $item) => $this->itemMetadataArray($item)['recharge']['status'] ?? null)
+            ->filter()
+            ->values();
+
+        if ($itemStatuses->contains('queued')) {
+            return 'queued';
+        }
+
+        if ($itemStatuses->contains('pending')) {
+            return 'pending';
+        }
+
+        if ($result['processed'] > 0 || $result['skipped'] > 0) {
+            return 'success';
         }
 
         return 'pending_retry';
