@@ -157,16 +157,12 @@ class OrderRechargeService
                 continue;
             }
 
-            Log::info('Vodacom order recharge request', $this->rechargeLogContext(
-                $order,
-                $assignment,
-                $item,
-                $bundle,
-                $payload
-            ));
+            $rechargeLog = $this->rechargePayloadLog($order, $assignment, $payload);
+
+            Log::info('Vodacom recharge request payload', $rechargeLog);
 
             try {
-                $response = $this->vodacom->post('/api/recharge', [], $payload);
+                $response = $this->vodacom->post('/api/recharge', [], $payload, $rechargeLog);
                 $body = $response->json();
                 $responseBody = is_array($body) ? $body : ['raw' => (string) $response->body()];
                 $httpStatus = $response->status();
@@ -484,6 +480,24 @@ class OrderRechargeService
         }
 
         return sprintf('RCH-%s-%d-%d', now()->format('Ymd'), $order->id, $item->id);
+    }
+
+    /**
+     * @param  array<string, string|int>  $payload
+     * @return array<string, mixed>
+     */
+    private function rechargePayloadLog(Order $order, UserEsim $assignment, array $payload): array
+    {
+        return [
+            'order_id' => $order->id,
+            'user_id' => $order->user_id,
+            'user_esim_id' => $assignment->id,
+            'msisdn' => $payload['msisdn'] ?? null,
+            'network_id' => $payload['network_id'] ?? null,
+            'product_id' => $payload['product_id'] ?? null,
+            'reference' => $payload['reference'] ?? null,
+            'airtime_amount' => $payload['airtime_amount'] ?? null,
+        ];
     }
 
     /**
