@@ -17,7 +17,8 @@ class Bundle extends Model {
       'data_mb',
       'voice_minutes',
       'sms',
-      'price',
+      'price_usd',
+      'price_tzs',
       'currency',
       'bundle_size',
       'bundle_size_in_mb',
@@ -26,7 +27,12 @@ class Bundle extends Model {
       'active',
       'metadata'
     ];
-    protected $casts = ['metadata' => 'array', 'active' => 'boolean'];
+    protected $casts = [
+        'metadata' => 'array',
+        'active' => 'boolean',
+        'price_usd' => 'decimal:2',
+        'price_tzs' => 'integer',
+    ];
     public function type(){ return $this->belongsTo(BundleType::class, 'bundle_type_id'); }
     public function countryProvider(){ return $this->belongsTo(CountryProvider::class); }
   }

@@ -193,7 +193,7 @@ class OrderSeeder extends Seeder
 
                 $lines[] = [
                     'bundle' => $bundle,
-                    'line_subtotal' => (float) $bundle->price,
+                    'line_subtotal' => (float) $bundle->price_usd,
                 ];
             }
 
@@ -254,7 +254,7 @@ class OrderSeeder extends Seeder
                         'bundle_name' => $bundle->name,
                         'data_amount' => $bundle->data_mb,
                         'validity_days' => $bundle->validity_days,
-                        'price' => $bundle->price,
+                        'price' => $bundle->price_usd,
                         'currency' => $bundle->currency,
                     ]
                 );

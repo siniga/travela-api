@@ -27,11 +27,6 @@ class ProviderController extends Controller
         ->where('provider_id', $provider->id)
         ->firstOrFail();
 
-    $usdRate = (float) config('services.fx.tzs_to_usd_rate', 2500);
-    if ($usdRate <= 0) {
-        $usdRate = 2500;
-    }
-
     $q = Bundle::with('type')
         ->where('country_provider_id', $pivot->id);
 
@@ -52,17 +47,14 @@ class ProviderController extends Controller
     }
 
     if ($min = $r->query('min_price')) {
-        $q->where('price', '>=', $min);
+        $q->where('price_usd', '>=', $min);
     }
 
     if ($max = $r->query('max_price')) {
-        $q->where('price', '<=', $max);
+        $q->where('price_usd', '<=', $max);
     }
 
-    $bundles = $q->orderBy('price')->get()->map(function ($b) use ($usdRate) {
-        $tzsPrice = (float) $b->price;
-        $usdPrice = round($tzsPrice / $usdRate, 2);
-
+    $bundles = $q->orderBy('price_usd')->get()->map(function ($b) {
         return [
             'id'            => $b->id,
             'name'          => $b->name,
@@ -71,7 +63,7 @@ class ProviderController extends Controller
             'data_mb'       => $b->data_mb,
             'voice_minutes' => $b->voice_minutes,
             'sms'           => $b->sms,
-            'price'         => $usdPrice,
+            'price'         => (float) $b->price_usd,
             'currency'      => 'USD',
             'active'        => $b->active,
             'metadata'      => $b->metadata,

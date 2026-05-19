@@ -22,7 +22,7 @@ class BundleController extends Controller
         // }
 
         return response()->json([
-            'bundles' => $q->orderBy('price')->get(),
+            'bundles' => $q->orderBy('price_usd')->get(),
         ]);
     }
 }

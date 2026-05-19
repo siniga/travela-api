@@ -710,6 +710,10 @@ class OrderRechargeService
             }
         }
 
+        if ($bundle->price_tzs !== null && (int) $bundle->price_tzs >= 1) {
+            return $this->formatAirtimeAmount($bundle->price_tzs);
+        }
+
         $byProduct = config('services.vodacom_sim.recharge_airtime_by_product_id', []);
         $productId = (int) $bundle->sim_bundle_id;
         if (isset($byProduct[$productId])) {
@@ -719,24 +723,7 @@ class OrderRechargeService
             return $this->formatAirtimeAmount($byProduct[(string) $productId]);
         }
 
-        $currency = strtoupper((string) ($bundle->currency ?: $order->currency ?: 'TZS'));
-        $amount = (float) $bundle->price;
-
-        if ($currency === 'USD') {
-            $rate = (float) config('services.fx.tzs_to_usd_rate', 2500);
-            if ($rate <= 0) {
-                return null;
-            }
-            $amount = $amount * $rate;
-        } elseif ($currency !== 'TZS') {
-            return null;
-        }
-
-        if ($amount < 1) {
-            return null;
-        }
-
-        return $this->formatAirtimeAmount($amount);
+        return null;
     }
 
     private function formatAirtimeAmount(mixed $value): string
