@@ -29,7 +29,7 @@ class StoreOrderRequest extends FormRequest
 
             'items' => ['required', 'array', 'min:1'],
             'items.*.type' => ['required', 'in:bundle,service'],
-            'items.*.bundle_id' => ['required_if:items.*.type,bundle', 'nullable', 'integer'],
+            'items.*.bundle_id' => ['required_if:items.*.type,bundle', 'nullable', 'integer', 'exists:bundles,id'],
             'items.*.bundle_name' => ['required', 'string', 'max:120'],
             'items.*.data_amount' => ['nullable', 'integer', 'min:0'],
             'items.*.validity_days' => ['nullable', 'integer', 'min:1'],

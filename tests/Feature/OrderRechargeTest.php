@@ -1,0 +1,192 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\Bundle;
+use App\Models\BundleType;
+use App\Models\Country;
+use App\Models\CountryProvider;
+use App\Models\Esim;
+use App\Models\Order;
+use App\Models\OrderItem;
+use App\Models\Provider;
+use App\Models\User;
+use App\Models\UserEsim;
+use App\Services\EvPayService;
+use App\Services\OrderRechargeService;
+use App\Services\VodacomSimManagerService;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
+use Tests\TestCase;
+
+class OrderRechargeTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_fulfill_order_posts_recharge_per_bundle_item(): void
+    {
+        [$order, $item] = $this->createPaidOrderFixture();
+
+        $this->mock(VodacomSimManagerService::class, function ($mock) use ($item) {
+            $mock->shouldReceive('post')
+                ->once()
+                ->with('/api/recharge', [], \Mockery::on(function (array $payload) use ($item) {
+                    return $payload['msisdn'] === '255797053059'
+                        && $payload['network_id'] === 1
+                        && $payload['product_id'] === 66
+                        && str_starts_with($payload['reference'], 'RCH-')
+                        && $payload['airtime_amount'] === '90.00';
+                }))
+                ->andReturn(Http::response(['success' => true], 200));
+        });
+
+        $result = app(OrderRechargeService::class)->fulfillOrder($order);
+
+        $this->assertSame(1, $result['processed']);
+        $this->assertSame(0, $result['failed']);
+
+        $item->refresh();
+        $this->assertSame('sent', $item->metadata['recharge']['status']);
+        $this->assertSame(200, $item->metadata['recharge']['http_status']);
+    }
+
+    public function test_fulfill_order_is_idempotent_for_already_sent_items(): void
+    {
+        [$order, $item] = $this->createPaidOrderFixture();
+
+        $item->metadata = [
+            'recharge' => [
+                'reference' => 'RCH-20260519-1-1',
+                'status' => 'sent',
+                'requested_at' => now()->toIso8601String(),
+            ],
+        ];
+        $item->save();
+
+        $this->mock(VodacomSimManagerService::class, function ($mock) {
+            $mock->shouldReceive('post')->never();
+        });
+
+        $result = app(OrderRechargeService::class)->fulfillOrder($order);
+
+        $this->assertSame(0, $result['processed']);
+        $this->assertSame(1, $result['skipped']);
+    }
+
+    public function test_evpay_paid_callback_triggers_recharge(): void
+    {
+        [$order] = $this->createPaidOrderFixture(pending: true);
+        $order->payment_reference = 'ORD-20260519-001';
+        $order->payment_status = 'pending';
+        $order->status = 'pending_payment';
+        $order->save();
+
+        $this->mock(VodacomSimManagerService::class, function ($mock) {
+            $mock->shouldReceive('post')
+                ->once()
+                ->with('/api/recharge', [], \Mockery::type('array'))
+                ->andReturn(Http::response(['success' => true], 200));
+        });
+
+        $service = app(EvPayService::class);
+        $result = $service->handleCallback(Request::create('/api/payments/evpay/callback', 'POST', [
+            'reference' => 'ORD-20260519-001',
+            'status' => 'paid',
+        ]));
+
+        $this->assertTrue($result['success']);
+        $order->refresh();
+        $this->assertSame('paid', $order->payment_status);
+
+        $this->assertDatabaseHas('order_items', [
+            'order_id' => $order->id,
+        ]);
+
+        $item = $order->orderItems()->first();
+        $item->refresh();
+        $this->assertSame('sent', $item->metadata['recharge']['status'] ?? null);
+    }
+
+    public function test_fulfill_order_without_esim_records_error_without_throwing(): void
+    {
+        [$order] = $this->createPaidOrderFixture(assignEsim: false);
+
+        $this->mock(VodacomSimManagerService::class, function ($mock) {
+            $mock->shouldReceive('post')->never();
+        });
+
+        $result = app(OrderRechargeService::class)->fulfillOrder($order);
+
+        $this->assertSame(0, $result['processed']);
+        $this->assertNotEmpty($result['errors']);
+
+        $order->refresh();
+        $this->assertArrayHasKey('error', $order->metadata['fulfillment'] ?? []);
+    }
+
+    /**
+     * @return array{0: Order, 1: OrderItem}
+     */
+    private function createPaidOrderFixture(bool $pending = false, bool $assignEsim = true): array
+    {
+        $user = User::factory()->create();
+
+        $bundleType = BundleType::create(['code' => 'DATA', 'name' => 'Data only']);
+        $country = Country::create(['name' => 'Tanzania', 'iso2' => 'TZ', 'iso3' => 'TZA']);
+        $provider = Provider::create(['name' => 'Vodacom', 'slug' => 'vodacom']);
+        $pivot = CountryProvider::create([
+            'country_id' => $country->id,
+            'provider_id' => $provider->id,
+            'is_default' => true,
+        ]);
+
+        $bundle = Bundle::create([
+            'bundle_type_id' => $bundleType->id,
+            'country_provider_id' => $pivot->id,
+            'name' => 'Nomad 10GB',
+            'validity_days' => 30,
+            'price' => 90.00,
+            'currency' => 'USD',
+            'sim_bundle_id' => 66,
+            'active' => true,
+        ]);
+
+        if ($assignEsim) {
+            $esim = Esim::create([
+                'msisdn' => '255797053059',
+                'network_id' => 1,
+                'status' => 'MANAGED',
+            ]);
+            UserEsim::create([
+                'user_id' => $user->id,
+                'esim_id' => $esim->id,
+            ]);
+        }
+
+        $order = Order::create([
+            'draft_id' => 'DRAFT-TEST-' . uniqid(),
+            'user_id' => $user->id,
+            'status' => $pending ? 'pending_payment' : 'paid',
+            'payment_status' => $pending ? 'pending' : 'paid',
+            'subtotal' => 90.00,
+            'discount_amount' => 0,
+            'total_amount' => 90.00,
+            'currency' => 'USD',
+            'paid_at' => $pending ? null : now(),
+        ]);
+
+        $item = OrderItem::create([
+            'order_id' => $order->id,
+            'type' => 'bundle',
+            'bundle_id' => $bundle->id,
+            'bundle_name' => $bundle->name,
+            'price' => 90.00,
+            'currency' => 'USD',
+        ]);
+
+        $order->load('orderItems.bundle');
+
+        return [$order, $item];
+    }
+}

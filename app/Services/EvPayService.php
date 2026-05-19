@@ -9,6 +9,11 @@ use Illuminate\Support\Facades\Log;
 
 class EvPayService
 {
+    public function __construct(
+        private readonly OrderRechargeService $orderRecharge,
+    ) {
+    }
+
     public function prepare(Order $order): Order
     {
         if ($order->payment_status === 'paid') {
@@ -217,6 +222,17 @@ class EvPayService
         });
 
         $order->refresh();
+
+        if ($isPaid) {
+            try {
+                $this->orderRecharge->fulfillOrder($order);
+            } catch (\Throwable $e) {
+                Log::error('Order recharge fulfillment failed after EvPay callback', [
+                    'order_id' => $order->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
 
         Log::info('EvPay callback processed', [
             'order_id' => $order->id,
