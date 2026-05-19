@@ -225,10 +225,16 @@ class EvPayService
 
         if ($isPaid) {
             try {
-                $this->orderRecharge->fulfillOrder($order);
+                $this->orderRecharge->rechargePaidOrder($order, [
+                    'payment_id' => $this->extractGatewayPaymentId($payload),
+                    'transaction_reference' => $reference,
+                ]);
             } catch (\Throwable $e) {
                 Log::error('Order recharge fulfillment failed after EvPay callback', [
                     'order_id' => $order->id,
+                    'user_id' => $order->user_id,
+                    'payment_id' => $this->extractGatewayPaymentId($payload),
+                    'transaction_reference' => $reference,
                     'error' => $e->getMessage(),
                 ]);
             }

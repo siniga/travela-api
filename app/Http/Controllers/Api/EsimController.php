@@ -132,7 +132,12 @@ class EsimController extends Controller
             'body' => mb_substr((string) $response->body(), 0, 8000),
         ]);
 
-        if ($response->successful()) {
+        if ($response->status() === 202) {
+            Log::info('Vodacom sims-balances queued for callback', [
+                'query' => $query,
+                'body' => mb_substr((string) $response->body(), 0, 2000),
+            ]);
+        } elseif ($response->successful()) {
             $synced = $this->balances->syncFromVodacomPayload($response->json());
             Log::info('Vodacom sims-balances synced to database', ['synced' => $synced]);
         } else {

@@ -21,6 +21,9 @@ class StoreOrderRequest extends FormRequest
             'country' => ['nullable', 'string', 'max:10'],
             'countryName' => ['nullable', 'string', 'max:120'],
             'simType' => ['nullable', 'string', 'in:esim,physical'],
+            'msisdn' => ['nullable', 'string', 'max:20'],
+            'esim_id' => ['nullable', 'integer', 'exists:esims,id'],
+            'user_esim_id' => ['nullable', 'integer', 'exists:user_esims,id'],
 
             'trip.destination_country' => ['required', 'string', 'max:80'],
             'trip.arrival_date' => ['required', 'date'],

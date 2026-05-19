@@ -65,9 +65,9 @@ class VodacomSimManagerService
             'method' => $method,
             'path' => $path,
             'query' => $query,
-            'body' => $jsonBody ? array_keys($jsonBody) : null,
+            'request_payload' => $jsonBody,
             'status' => $response->status(),
-            'response' => mb_substr((string) $response->body(), 0, 2000),
+            'response_body' => mb_substr((string) $response->body(), 0, 8000),
         ]);
     }
 }

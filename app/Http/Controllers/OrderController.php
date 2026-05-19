@@ -86,6 +86,11 @@ class OrderController extends Controller
                 'simType' => $v['simType'] ?? null,
                 'finalized_at' => now()->toIso8601String(),
             ]);
+            foreach (['msisdn', 'esim_id', 'user_esim_id'] as $simKey) {
+                if (! empty($v[$simKey])) {
+                    $meta[$simKey] = $v[$simKey];
+                }
+            }
             $meta['status'] = $newStatus;
             if (! empty($v['payment'] ?? [])) {
                 $meta['payment'] = array_filter([
@@ -167,10 +172,14 @@ class OrderController extends Controller
                 $paymentRef = $checkout['payment_reference'] ?? null;
             } else {
                 try {
-                    $this->orderRecharge->fulfillOrder($order);
+                    $this->orderRecharge->rechargePaidOrder($order, [
+                        'payment_id' => $order->gateway_payment_id,
+                        'transaction_reference' => $order->payment_reference,
+                    ]);
                 } catch (\Throwable $e) {
                     Log::error('Order recharge fulfillment failed after storeOrder', [
                         'order_id' => $order->id,
+                        'user_id' => $order->user_id,
                         'error' => $e->getMessage(),
                     ]);
                 }

@@ -28,15 +28,15 @@ class OrderRechargeTest extends TestCase
     {
         [$order, $item] = $this->createPaidOrderFixture();
 
-        $this->mock(VodacomSimManagerService::class, function ($mock) use ($item) {
+        $this->mock(VodacomSimManagerService::class, function ($mock) {
             $mock->shouldReceive('post')
                 ->once()
-                ->with('/api/recharge', [], \Mockery::on(function (array $payload) use ($item) {
+                ->with('/api/recharge', [], \Mockery::on(function (array $payload) {
                     return $payload['msisdn'] === '255797053059'
                         && $payload['network_id'] === 1
                         && $payload['product_id'] === 66
                         && str_starts_with($payload['reference'], 'RCH-')
-                        && $payload['airtime_amount'] === '90.00';
+                        && ($payload['airtime_amount'] ?? null) === '500';
                 }))
                 ->andReturn(Http::response(['success' => true], 200));
         });
@@ -122,7 +122,66 @@ class OrderRechargeTest extends TestCase
         $this->assertNotEmpty($result['errors']);
 
         $order->refresh();
-        $this->assertArrayHasKey('error', $order->metadata['fulfillment'] ?? []);
+        $this->assertSame('pending_esim', $order->metadata['recharge_status'] ?? null);
+        $this->assertNotEmpty($order->metadata['recharge_error'] ?? null);
+    }
+
+    public function test_recharge_resolves_esim_from_order_metadata_msisdn(): void
+    {
+        $user = User::factory()->create();
+        $esim = Esim::create([
+            'msisdn' => '255798092059',
+            'network_id' => 1,
+            'status' => 'AVAILABLE',
+        ]);
+
+        [$order] = $this->createPaidOrderFixture(assignEsim: false);
+        $order->user_id = $user->id;
+        $order->metadata = ['msisdn' => '255798092059'];
+        $order->save();
+
+        $this->mock(VodacomSimManagerService::class, function ($mock) {
+            $mock->shouldReceive('post')->once()->andReturn(Http::response(['success' => true], 200));
+        });
+
+        $result = app(OrderRechargeService::class)->rechargePaidOrder($order);
+
+        $this->assertSame(1, $result['processed']);
+        $this->assertDatabaseHas('user_esims', [
+            'user_id' => $user->id,
+            'esim_id' => $esim->id,
+        ]);
+    }
+
+    public function test_duplicate_evpay_payment_id_skips_second_recharge(): void
+    {
+        [$order, $item] = $this->createPaidOrderFixture();
+        $item->metadata = [
+            'recharge' => [
+                'reference' => 'RCH-EXISTING',
+                'status' => 'sent',
+                'requested_at' => now()->toIso8601String(),
+            ],
+        ];
+        $item->save();
+        $order->metadata = [
+            'recharge_status' => 'completed',
+            'recharge_evpay_payment_id' => 'pay-123',
+        ];
+        $order->gateway_payment_id = 'pay-123';
+        $order->save();
+
+        $this->mock(VodacomSimManagerService::class, function ($mock) {
+            $mock->shouldReceive('post')->never();
+        });
+
+        $result = app(OrderRechargeService::class)->rechargePaidOrder($order, [
+            'payment_id' => 'pay-123',
+            'transaction_reference' => 'ORD-TEST',
+        ]);
+
+        $this->assertSame(0, $result['processed']);
+        $this->assertSame('completed', $result['recharge_status']);
     }
 
     /**

@@ -92,6 +92,14 @@ class VodacomBalanceService
             return [];
         }
 
+        if ($this->isAsyncQueuedResponse($payload)) {
+            Log::info('Vodacom balance: request queued for callback', [
+                'message' => $payload['message'] ?? null,
+            ]);
+
+            return [];
+        }
+
         $records = $this->extractBalanceRecords($payload);
 
         if ($records === []) {
@@ -113,6 +121,21 @@ class VodacomBalanceService
         }
 
         return $results;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function isAsyncQueuedResponse(array $payload): bool
+    {
+        $message = $payload['message'] ?? $payload['Message'] ?? null;
+
+        if (! is_string($message)) {
+            return false;
+        }
+
+        return stripos($message, 'queued') !== false
+            || stripos($message, 'callback') !== false;
     }
 
     /**
