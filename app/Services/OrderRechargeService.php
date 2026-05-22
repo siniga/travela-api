@@ -658,13 +658,13 @@ class OrderRechargeService
             return null;
         }
 
-        return [
+        return VodacomRechargePayload::normalize([
             'msisdn' => $esim->msisdn,
             'network_id' => (int) $esim->network_id,
             'product_id' => (int) $bundle->sim_bundle_id,
             'reference' => $reference,
             'airtime_amount' => $airtime,
-        ];
+        ]);
     }
 
     /**
@@ -728,11 +728,7 @@ class OrderRechargeService
 
     private function formatAirtimeAmount(mixed $value): string
     {
-        if (is_string($value) && preg_match('/^\d+$/', trim($value))) {
-            return trim($value);
-        }
-
-        return (string) max(1, (int) round((float) $value));
+        return VodacomRechargePayload::formatAirtimeAmount($value);
     }
 
     private function generateRechargeReference(Order $order, OrderItem $item): string
@@ -742,7 +738,7 @@ class OrderRechargeService
             return $existing;
         }
 
-        return sprintf('RCH-%s-%d-%d', now()->format('Ymd'), $order->id, $item->id);
+        return VodacomRechargePayload::generateReference($order->id, $item->id);
     }
 
     /**

@@ -8,6 +8,7 @@ use App\Models\Esim;
 use App\Models\Order;
 use App\Models\UserEsim;
 use App\Services\OrderRechargeService;
+use App\Services\VodacomRechargePayload;
 use App\Services\VodacomSimManagerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -168,7 +169,7 @@ class UserEsimController extends Controller
         }
 
         return $this->proxy($this->postVodacomRecharge(
-            array_filter($request->only(['airtime_amount', 'msisdn', 'network_id', 'reference', 'product_id']), fn ($v) => $v !== null && $v !== '')
+            $request->only(['airtime_amount', 'msisdn', 'network_id', 'reference', 'product_id'])
         ));
     }
 
@@ -191,9 +192,7 @@ class UserEsimController extends Controller
     {
         $order = Order::query()
             ->where('user_id', $userId)
-            ->where(function ($q) {
-                $q->where('payment_status', 'paid')->orWhere('status', 'paid');
-            })
+            ->where('payment_status', 'paid')
             ->where(function ($q) {
                 $q->whereNull('recharge_status')
                     ->orWhereIn('recharge_status', ['pending_esim', 'pending_retry', 'in_progress', 'failed']);
@@ -227,11 +226,12 @@ class UserEsimController extends Controller
     /**
      * @param  array<string, mixed>  $payload
      */
+    /**
+     * @param  array<string, mixed>  $payload
+     */
     private function postVodacomRecharge(array $payload)
     {
-        $payload = array_filter($payload, fn ($v) => ! is_null($v) && $v !== '');
-
-        return $this->vodacom->post('/api/recharge', [], $payload);
+        return $this->vodacom->post('/api/recharge', [], VodacomRechargePayload::normalize($payload));
     }
 
     private function requireOwnedEsim(Request $request, string $msisdn): UserEsim

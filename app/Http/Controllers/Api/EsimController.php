@@ -9,6 +9,7 @@ use App\Http\Requests\EsimSuspendRequest;
 use App\Models\Esim;
 use App\Models\UserEsim;
 use App\Services\VodacomBalanceService;
+use App\Services\VodacomRechargePayload;
 use App\Services\VodacomSimManagerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -109,8 +110,9 @@ class EsimController extends Controller
 
     public function recharge(EsimRechargeRequest $request)
     {
-        $payload = $request->only(['airtime_amount', 'msisdn', 'network_id', 'reference', 'product_id']);
-        $payload = array_filter($payload, fn ($v) => ! is_null($v) && $v !== '');
+        $payload = VodacomRechargePayload::normalize(
+            $request->only(['airtime_amount', 'msisdn', 'network_id', 'reference', 'product_id'])
+        );
 
         return $this->proxy($this->vodacom->post('/api/recharge', [], $payload));
     }

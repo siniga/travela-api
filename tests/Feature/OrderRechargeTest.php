@@ -35,8 +35,8 @@ class OrderRechargeTest extends TestCase
                     return $payload['msisdn'] === '255797053059'
                         && $payload['network_id'] === 1
                         && $payload['product_id'] === 66
-                        && str_starts_with($payload['reference'], 'RCH-')
-                        && ($payload['airtime_amount'] ?? null) === '500';
+                        && str_starts_with($payload['reference'], 'RECHARGE')
+                        && ($payload['airtime_amount'] ?? null) === '  500';
                 }), \Mockery::any())
                 ->andReturn(Http::response([
                     'status' => 'SUCCESS',
