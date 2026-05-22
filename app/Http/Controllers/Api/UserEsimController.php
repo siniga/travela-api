@@ -43,6 +43,16 @@ class UserEsimController extends Controller
     {
         $userId = $request->user()->id;
 
+        $existing = UserEsim::query()
+            ->where('user_id', $userId)
+            ->whereHas('esim', fn ($q) => $q->whereNotNull('msisdn')->where('msisdn', '!=', ''))
+            ->with('esim')
+            ->first();
+
+        if ($existing) {
+            return $this->registrationResponse($existing, false, 200);
+        }
+
         try {
             $result = DB::transaction(function () use ($userId) {
                 $existing = UserEsim::query()
@@ -92,51 +102,11 @@ class UserEsimController extends Controller
             ], 422);
         }
 
-        $fulfillment = $this->fulfillLatestPaidOrder($userId);
-
-        return response()->json([
-            'success' => true,
-            'message' => $result['created'] ? 'SIM assigned successfully' : 'SIM already assigned',
-            'data' => $result['assignment'],
-            'fulfillment' => $fulfillment,
-        ], $result['created'] ? 201 : 200);
-    }
-
-    /**
-     * Fulfill the user's latest paid order (bundle recharges) using their assigned SIM.
-     *
-     * @return array<string, mixed>|null
-     */
-    private function fulfillLatestPaidOrder(int $userId): ?array
-    {
-        $order = Order::query()
-            ->where('user_id', $userId)
-            ->where('payment_status', 'paid')
-            ->orderByDesc('id')
-            ->first();
-
-        if (! $order) {
-            return null;
-        }
-
-        try {
-            return $this->orderRecharge->rechargePaidOrder($order);
-        } catch (\Throwable $e) {
-            Log::error('Order recharge fulfillment failed after SIM registration', [
-                'order_id' => $order->id,
-                'user_id' => $userId,
-                'error' => $e->getMessage(),
-            ]);
-
-            return [
-                'order_id' => $order->id,
-                'processed' => 0,
-                'skipped' => 0,
-                'failed' => 0,
-                'errors' => [$e->getMessage()],
-                'recharge_status' => 'failed',
-            ];
-        }
+        return $this->registrationResponse(
+            $result['assignment'],
+            $result['created'],
+            $result['created'] ? 201 : 200,
+        );
     }
 
     public function recharges(Request $request)
@@ -197,8 +167,71 @@ class UserEsimController extends Controller
             return response()->json(['message' => 'You do not have access to this eSIM.'], 403);
         }
 
-        $payload = array_filter($request->only(['airtime_amount', 'msisdn', 'network_id', 'reference', 'product_id']), fn ($v) => $v !== null && $v !== '');
-        return $this->proxy($this->vodacom->post('/api/recharge', [], $payload));
+        return $this->proxy($this->postVodacomRecharge(
+            array_filter($request->only(['airtime_amount', 'msisdn', 'network_id', 'reference', 'product_id']), fn ($v) => $v !== null && $v !== '')
+        ));
+    }
+
+    private function registrationResponse(UserEsim $assignment, bool $created, int $status): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'message' => $created ? 'SIM assigned successfully' : 'SIM already assigned',
+            'data' => $assignment,
+            'recharge' => $this->fulfillLatestPaidOrder($assignment->user_id),
+        ], $status);
+    }
+
+    /**
+     * Fulfill the user's latest paid order (payment already completed) via Vodacom recharge per bundle item.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function fulfillLatestPaidOrder(int $userId): ?array
+    {
+        $order = Order::query()
+            ->where('user_id', $userId)
+            ->where(function ($q) {
+                $q->where('payment_status', 'paid')->orWhere('status', 'paid');
+            })
+            ->where(function ($q) {
+                $q->whereNull('recharge_status')
+                    ->orWhereIn('recharge_status', ['pending_esim', 'pending_retry', 'in_progress', 'failed']);
+            })
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $order) {
+            return null;
+        }
+
+        try {
+            return $this->orderRecharge->rechargePaidOrder($order);
+        } catch (\Throwable $e) {
+            Log::error('Order recharge failed after SIM registration', [
+                'user_id' => $userId,
+                'order_id' => $order->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [
+                'processed' => 0,
+                'skipped' => 0,
+                'failed' => 0,
+                'errors' => [$e->getMessage()],
+                'recharge_status' => 'failed',
+            ];
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function postVodacomRecharge(array $payload)
+    {
+        $payload = array_filter($payload, fn ($v) => ! is_null($v) && $v !== '');
+
+        return $this->vodacom->post('/api/recharge', [], $payload);
     }
 
     private function requireOwnedEsim(Request $request, string $msisdn): UserEsim
