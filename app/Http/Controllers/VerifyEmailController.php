@@ -18,16 +18,21 @@ class VerifyEmailController extends Controller
         ]);
 
         $user = User::where('email', $request->email)->first();
-        
-        if (!$user || 
-            !$user->email_verification_code || 
-            !Hash::check($request->code, $user->email_verification_code) ||
-            $user->email_verification_expires_at < now()) {
+        if (! $user) {
             return response()->json(['message' => 'Invalid or expired verification code'], 422);
         }
 
         if ($user->hasVerifiedEmail()) {
             return response()->json(['message' => 'Email already verified'], 200);
+        }
+
+        if (
+            ! $user->email_verification_code
+            || ! $user->email_verification_expires_at
+            || ! Hash::check($request->code, $user->email_verification_code)
+            || $user->email_verification_expires_at < now()
+        ) {
+            return response()->json(['message' => 'Invalid or expired verification code'], 422);
         }
 
         // Mark email as verified and clear verification code
