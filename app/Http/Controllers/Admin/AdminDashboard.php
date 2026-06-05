@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Esim;
 use App\Models\Order;
 use App\Models\UserEsim;
+use App\Services\SimInventoryService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -14,6 +15,10 @@ use Illuminate\Support\Facades\DB;
 
 class AdminDashboard extends Controller
 {
+    public function __construct(private readonly SimInventoryService $inventory)
+    {
+    }
+
     public function stats(): JsonResponse
     {
         $totalOrders = (int) Order::query()->where('status', '!=', 'draft')->count();
@@ -31,6 +36,7 @@ class AdminDashboard extends Controller
                 'todays_orders' => $todaysOrders,
                 'esims_issued' => $this->esimsIssuedData(),
                 'recent_orders' => $this->recentOrdersData(),
+                'inventory_stock' => $this->inventory->report(),
             ],
         ]);
     }

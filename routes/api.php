@@ -19,8 +19,10 @@ use App\Http\Controllers\Api\UserEsimController;
 use App\Http\Controllers\Api\AdminUserEsimController;
 use App\Http\Controllers\Admin\AdminDashboard;
 use App\Http\Controllers\Admin\ServiceProviderSimsController;
+use App\Http\Controllers\Admin\InventoryController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\AgentController;
+use App\Http\Controllers\Api\PhysicalSimIssuanceController;
 
 
 Route::prefix('auth')->group(function () {
@@ -76,6 +78,7 @@ Route::prefix('me')->middleware('auth:sanctum')->group(function () {
   Route::get('/orders', [OrderController::class, 'myOrders']);
   Route::get('/orders/search', [OrderController::class, 'searchByOrderNumber']);
   Route::get('/esims', [UserEsimController::class, 'index']);
+  Route::get('/esims/assignment-status', [UserEsimController::class, 'assignmentStatus']);
   Route::post('/esims/register', [UserEsimController::class, 'register']);
   Route::get('/recharges', [UserEsimController::class, 'recharges']);
   Route::get('/usage', [UserEsimController::class, 'usage']);
@@ -89,6 +92,7 @@ Route::prefix('me')->middleware('auth:sanctum')->group(function () {
 // Agent app routes (use agent token — not /api/admin/*)
 Route::prefix('agent')->middleware(['auth:sanctum', 'agent'])->group(function () {
   Route::get('/orders/search', [OrderController::class, 'searchByOrderNumber']);
+  Route::post('/orders/issue-physical', [PhysicalSimIssuanceController::class, 'issueByOrder']);
   Route::patch('/location', [AgentController::class, 'updateMyLocation']);
 });
 
@@ -109,6 +113,8 @@ Route::prefix('admin')->middleware(['auth:sanctum', 'admin'])->group(function ()
   // Orders (admin)
   Route::get('/orders', [OrderController::class, 'getOrders']);
   Route::get('/orders/search', [OrderController::class, 'searchByOrderNumber']);
+  Route::post('/orders/issue-physical', [PhysicalSimIssuanceController::class, 'issueByOrder']);
+  Route::post('/user-esims/{id}/issue-physical', [PhysicalSimIssuanceController::class, 'issueByAssignment']);
   Route::get('/users/{userId}/orders', [OrderController::class, 'getOrdersByUser']);
 
   // Dashboard (admin)
@@ -119,8 +125,13 @@ Route::prefix('admin')->middleware(['auth:sanctum', 'admin'])->group(function ()
 
   // Service provider SIM inventory (local DB)
   Route::get('/service-providers/{provider}/sims', [ServiceProviderSimsController::class, 'index']);
+
+  // SIM stock levels + low-inventory alerts
+  Route::get('/inventory/stock', [InventoryController::class, 'stock']);
 });
 
+
+Route::middleware('auth:sanctum')->get('/orders/search', [OrderController::class, 'searchByOrderNumber']);
 
 Route::middleware(['auth:sanctum', 'verified'])->group(function () {
   Route::post('/logout', [AuthController::class, 'logout']);

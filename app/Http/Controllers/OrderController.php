@@ -8,7 +8,10 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Trip;
 use App\Models\Kyc;
+use App\Models\Esim;
+use App\Models\UserEsim;
 use App\Services\EvPayService;
+use App\Services\PhysicalSimIssuanceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -17,6 +20,7 @@ class OrderController extends Controller
 {
     public function __construct(
         private readonly EvPayService $evpay,
+        private readonly PhysicalSimIssuanceService $physicalIssuance,
     ) {
     }
 
@@ -74,7 +78,7 @@ class OrderController extends Controller
 
         $user = $request->user();
         $query = Order::query()
-            ->with(['trip', 'orderItems.bundle', 'user', 'kyc'])
+            ->with(['orderItems', 'user'])
             ->where('draft_id', $draftId);
 
         if ($user && ! $user->isAdmin() && ! $user->isAgent()) {
@@ -92,7 +96,7 @@ class OrderController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $order,
+            'data' => $this->formatOrderSearchPayload($order),
         ]);
     }
 
@@ -470,6 +474,140 @@ class OrderController extends Controller
         }
 
         return trim((string) $value);
+    }
+
+    /**
+     * @return array{
+     *     order: array<string, mixed>,
+     *     order_items: list<array<string, mixed>>,
+     *     user: ?array<string, mixed>,
+     *     user_esim: ?array<string, mixed>,
+     *     esim: ?array<string, mixed>
+     * }
+     */
+    private function formatOrderSearchPayload(Order $order): array
+    {
+        $userEsim = $this->resolveUserEsimForOrder($order);
+        if ($userEsim) {
+            $userEsim->loadMissing(['bundle', 'order', 'orderItem', 'physicalIssuedBy', 'esim']);
+        }
+
+        $meta = $this->metadataArray($order);
+
+        return [
+            'order' => array_merge($order->only([
+                'id',
+                'draft_id',
+                'user_id',
+                'status',
+                'subtotal',
+                'discount_amount',
+                'discount_code',
+                'total_amount',
+                'currency',
+                'payment_status',
+                'payment_reference',
+                'paid_at',
+                'recharge_status',
+                'created_at',
+                'updated_at',
+            ]), [
+                'sim_type' => $meta['simType'] ?? null,
+            ]),
+            'order_items' => $order->orderItems
+                ->map(fn (OrderItem $item) => $item->only([
+                    'id',
+                    'order_id',
+                    'type',
+                    'bundle_id',
+                    'bundle_name',
+                    'data_amount',
+                    'validity_days',
+                    'price',
+                    'currency',
+                ]))
+                ->values()
+                ->all(),
+            'user' => $order->user?->only(['id', 'name', 'email', 'role']),
+            'user_esim' => $userEsim ? array_merge(
+                $userEsim->only([
+                    'id',
+                    'user_id',
+                    'esim_id',
+                    'bundle_id',
+                    'order_id',
+                    'order_item_id',
+                    'balance',
+                    'balance_currency',
+                    'last_recharge_amount',
+                    'last_recharge_reference',
+                    'last_recharge_status',
+                    'last_recharged_at',
+                    'physical_issued_at',
+                    'physical_issued_by',
+                    'physical_issued_location',
+                ]),
+                [
+                    'bundle' => $userEsim->bundleWithDuration(),
+                ],
+                $this->physicalIssuance->issuancePayload($userEsim),
+            ) : null,
+            'esim' => $userEsim?->esim?->only([
+                'id',
+                'sim_id',
+                'msisdn',
+                'iccid',
+                'imsi',
+                'sim_type',
+                'status',
+                'provider_status',
+                'network_id',
+            ]),
+        ];
+    }
+
+    private function resolveUserEsimForOrder(Order $order): ?UserEsim
+    {
+        $meta = $this->metadataArray($order);
+
+        if (! empty($meta['user_esim_id'])) {
+            $assignment = UserEsim::with(['esim', 'bundle'])->find($meta['user_esim_id']);
+            if ($assignment) {
+                return $assignment;
+            }
+        }
+
+        if (! empty($meta['esim_id'])) {
+            $assignment = UserEsim::with(['esim', 'bundle'])
+                ->where('esim_id', $meta['esim_id'])
+                ->when($order->user_id, fn ($q) => $q->where('user_id', $order->user_id))
+                ->first();
+            if ($assignment) {
+                return $assignment;
+            }
+        }
+
+        if (! empty($meta['msisdn'])) {
+            $esim = Esim::findByMsisdn((string) $meta['msisdn']);
+            if ($esim) {
+                $assignment = UserEsim::with(['esim', 'bundle'])
+                    ->where('esim_id', $esim->id)
+                    ->when($order->user_id, fn ($q) => $q->where('user_id', $order->user_id))
+                    ->first();
+                if ($assignment) {
+                    return $assignment;
+                }
+            }
+        }
+
+        if ($order->user_id) {
+            return UserEsim::with(['esim', 'bundle'])
+                ->where('user_id', $order->user_id)
+                ->orderByDesc('id')
+                ->first();
+        }
+
+        return null;
     }
 
     private function metadataArray(Order $order): array

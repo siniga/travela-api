@@ -154,6 +154,27 @@
       "response": []
     },
     {
+      "name": "Agent — Mark physical SIM issued",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [{ "key": "token", "value": "{{agent_token}}", "type": "string" }]
+        },
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"draft_id\": \"DRAFT-2026-1778933916188\",\n  \"msisdn\": \"255798091323\",\n  \"location\": \"Terminal 1A, Counter 3\"\n}"
+        },
+        "url": "{{base_url}}/agent/orders/issue-physical",
+        "description": "Agent only. Call after physically handing the SIM card to the customer. Updates `physical_issued_at`, `physical_issued_by`, and `physical_issued_location` on the assignment."
+      },
+      "response": []
+    },
+    {
       "name": "Agent — Update current location",
       "request": {
         "auth": {

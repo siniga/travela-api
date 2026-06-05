@@ -6,14 +6,18 @@ use App\Http\Controllers\Controller;
 use App\Models\Esim;
 use App\Models\User;
 use App\Models\UserEsim;
+use App\Models\Order;
+use App\Services\UserEsimOrderLinkService;
 use App\Services\VodacomSimManagerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class AdminUserEsimController extends Controller
 {
-    public function __construct(private readonly VodacomSimManagerService $vodacom)
-    {
+    public function __construct(
+        private readonly VodacomSimManagerService $vodacom,
+        private readonly UserEsimOrderLinkService $esimOrderLink,
+    ) {
     }
 
     /**
@@ -41,9 +45,11 @@ class AdminUserEsimController extends Controller
 
     public function index()
     {
-        $items = UserEsim::with(['user:id,name,email,role', 'esim'])
+        $items = UserEsim::with(['user:id,name,email,role', 'esim', 'bundle', 'order', 'orderItem'])
             ->orderBy('id', 'desc')
             ->paginate(50);
+
+        $items->getCollection()->transform(fn (UserEsim $row) => $row->toAssignmentArray());
 
         return response()->json($items);
     }
@@ -54,6 +60,8 @@ class AdminUserEsimController extends Controller
             'user_id' => ['required', 'integer', 'exists:users,id'],
             'esim_id' => ['nullable', 'integer', 'exists:esims,id'],
             'msisdn' => ['nullable', 'string'],
+            'order_id' => ['nullable', 'integer', 'exists:orders,id'],
+            'bundle_id' => ['nullable', 'integer', 'exists:bundles,id'],
         ]);
 
         $esimId = $data['esim_id'] ?? null;
@@ -70,12 +78,27 @@ class AdminUserEsimController extends Controller
         $assignment = UserEsim::create([
             'user_id' => $data['user_id'],
             'esim_id' => $esimId,
+            'bundle_id' => $data['bundle_id'] ?? null,
+            'order_id' => $data['order_id'] ?? null,
         ]);
 
         // Mark inventory as managed
         Esim::where('id', $esimId)->update(['status' => 'MANAGED']);
 
-        return response()->json(['assignment' => $assignment->load(['user:id,name,email,role', 'esim'])], 201);
+        if (! empty($data['order_id'])) {
+            $order = Order::with('orderItems')->find($data['order_id']);
+            if ($order) {
+                $assignment = $this->esimOrderLink->linkAssignmentToOrder($assignment, $order);
+            }
+        } elseif (empty($data['bundle_id'])) {
+            $assignment = $this->esimOrderLink->linkAssignmentFromLatestPaidOrder($assignment);
+        }
+
+        $assignment->load(['user:id,name,email,role', 'esim', 'bundle', 'order', 'orderItem']);
+
+        return response()->json([
+            'assignment' => $assignment->toAssignmentArray(),
+        ], 201);
     }
 
     public function destroy(int $id)

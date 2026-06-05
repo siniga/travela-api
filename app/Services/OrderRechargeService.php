@@ -18,6 +18,7 @@ class OrderRechargeService
 
     public function __construct(
         private readonly VodacomSimManagerService $vodacom,
+        private readonly UserEsimOrderLinkService $esimOrderLink,
     ) {
     }
 
@@ -555,7 +556,7 @@ class OrderRechargeService
         }
 
         if (! empty($meta['msisdn']) && is_string($meta['msisdn'])) {
-            $assignment = $this->resolveOrAssignByMsisdn($order->user_id, $meta['msisdn']);
+            $assignment = $this->resolveOrAssignByMsisdn($order->user_id, $meta['msisdn'], $order);
             if ($assignment) {
                 return $assignment;
             }
@@ -580,7 +581,7 @@ class OrderRechargeService
             ->first();
     }
 
-    private function resolveOrAssignByMsisdn(int $userId, string $msisdn): ?UserEsim
+    private function resolveOrAssignByMsisdn(int $userId, string $msisdn, ?Order $order = null): ?UserEsim
     {
         $esim = Esim::findByMsisdn($msisdn);
         if (! $esim) {
@@ -590,9 +591,13 @@ class OrderRechargeService
         $owned = UserEsim::query()
             ->where('user_id', $userId)
             ->where('esim_id', $esim->id)
-            ->with('esim')
+            ->with(['esim', 'bundle'])
             ->first();
         if ($owned) {
+            if ($order) {
+                return $this->esimOrderLink->linkAssignmentToOrder($owned, $order);
+            }
+
             return $owned;
         }
 
@@ -607,10 +612,18 @@ class OrderRechargeService
             return null;
         }
 
-        return UserEsim::create([
+        $assignment = UserEsim::create([
             'user_id' => $userId,
             'esim_id' => $esim->id,
-        ])->load('esim');
+        ]);
+
+        $esim->update(['status' => 'MANAGED']);
+
+        if ($order) {
+            return $this->esimOrderLink->linkAssignmentToOrder($assignment, $order);
+        }
+
+        return $this->esimOrderLink->linkAssignmentFromLatestPaidOrder($assignment);
     }
 
     /**
@@ -972,6 +985,8 @@ class OrderRechargeService
         ?string $paymentId,
         ?string $transactionRef,
     ): void {
+        $this->esimOrderLink->linkAssignmentToOrder($assignment, $order);
+
         $meta = $this->orderMetadata($order);
         $meta['user_esim_id'] = $assignment->id;
         $meta['esim_id'] = $assignment->esim_id;

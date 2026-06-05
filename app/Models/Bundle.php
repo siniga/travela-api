@@ -35,5 +35,10 @@ class Bundle extends Model {
     ];
     public function type(){ return $this->belongsTo(BundleType::class, 'bundle_type_id'); }
     public function countryProvider(){ return $this->belongsTo(CountryProvider::class); }
+
+    public function userEsims()
+    {
+        return $this->hasMany(UserEsim::class);
+    }
   }
   
