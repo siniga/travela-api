@@ -199,7 +199,7 @@
           "path": ["agent", "orders", "by-msisdn"],
           "query": [{ "key": "msisdn", "value": "255798091321" }]
         },
-        "description": "After ICCID search, pass the suggestion `msisdn` (or `iccid`) to confirm payment. Returns order number, payment_status, is_paid, and user details. Works when the SIM is already assigned; for new physical pickups also try customer payment phone or use order search by draft_id."
+        "description": "Pass `msisdn` or `iccid` from ICCID search. Always returns SIM number (200). When an order is linked, `order_found: true` and `data` has order_number, payment_status, user. When no order yet, `order_found: false` and `data: null` — SIM details still returned."
       },
       "response": []
     },

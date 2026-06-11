@@ -63,22 +63,24 @@ class AgentOrderLookupController extends Controller
             $matchedBy = $order ? 'customer_phone' : null;
         }
 
-        if (! $order) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No order found for this SIM or phone number. Search by order number or assign after customer pays.',
-                'sim' => $this->simPayload($esim, $assignment),
-                'data' => null,
-            ], 404);
-        }
+        $sim = $this->simPayload($esim, $assignment);
+        $orderFound = $order !== null;
 
-        $order->loadMissing(['user', 'orderItems']);
+        if ($order) {
+            $order->loadMissing(['user', 'orderItems']);
+        }
 
         return response()->json([
             'success' => true,
+            'order_found' => $orderFound,
             'matched_by' => $matchedBy,
-            'sim' => $this->simPayload($esim, $assignment),
-            'data' => $this->formatAgentOrderPayload($order),
+            'message' => $orderFound
+                ? 'Order found for this SIM.'
+                : 'SIM found in inventory. No linked order yet — confirm payment via order number or assign after customer pays.',
+            'sim' => $sim,
+            'msisdn' => $sim['msisdn'],
+            'iccid' => $sim['iccid'],
+            'data' => $orderFound ? $this->formatAgentOrderPayload($order) : null,
         ]);
     }
 
