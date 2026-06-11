@@ -185,6 +185,25 @@
       "response": []
     },
     {
+      "name": "Agent — Order by SIM msisdn (payment check)",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [{ "key": "token", "value": "{{agent_token}}", "type": "string" }]
+        },
+        "method": "GET",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "url": {
+          "raw": "{{base_url}}/agent/orders/by-msisdn?msisdn=255798091321",
+          "host": ["{{base_url}}"],
+          "path": ["agent", "orders", "by-msisdn"],
+          "query": [{ "key": "msisdn", "value": "255798091321" }]
+        },
+        "description": "After ICCID search, pass the suggestion `msisdn` (or `iccid`) to confirm payment. Returns order number, payment_status, is_paid, and user details. Works when the SIM is already assigned; for new physical pickups also try customer payment phone or use order search by draft_id."
+      },
+      "response": []
+    },
+    {
       "name": "Agent — Assign physical SIM to paid order",
       "request": {
         "auth": {
