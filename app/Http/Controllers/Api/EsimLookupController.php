@@ -45,11 +45,32 @@ class EsimLookupController extends Controller
         $simType = strtolower((string) $request->query('sim_type', Esim::SIM_TYPE_PHYSICAL));
         $availableOnly = $request->boolean('available_only');
 
-        $likeSuffix = '%'.$this->escapeLike($suffix);
+        $escaped = $this->escapeLike($suffix);
+        $likeSuffix = '%'.$escaped;
+        $likePrefix = $escaped.'%';
+        $likeContains = '%'.$escaped.'%';
 
         $query = Esim::query()
             ->whereNotNull('iccid')
-            ->where('iccid', 'like', $likeSuffix)
+            ->where(function ($q) use ($suffix, $likeSuffix, $likePrefix, $likeContains) {
+                $q->where('iccid', 'like', $likeSuffix)
+                    ->orWhere('iccid', 'like', $likePrefix)
+                    ->orWhere('iccid', $suffix);
+
+                // Longer input is often a full ICCID scan — allow substring match too.
+                if (strlen($suffix) >= 10) {
+                    $q->orWhere('iccid', 'like', $likeContains);
+                }
+
+                // Agents sometimes type the phone number on the card, not ICCID.
+                $q->orWhere(function ($msisdnQ) use ($likeSuffix, $likePrefix) {
+                    $msisdnQ->whereNotNull('msisdn')
+                        ->where(function ($inner) use ($likeSuffix, $likePrefix) {
+                            $inner->where('msisdn', 'like', $likeSuffix)
+                                ->orWhere('msisdn', 'like', $likePrefix);
+                        });
+                });
+            })
             ->orderBy('iccid');
 
         if (in_array($simType, [Esim::SIM_TYPE_PHYSICAL, Esim::SIM_TYPE_ESIM], true)) {
@@ -61,6 +82,11 @@ class EsimLookupController extends Controller
         }
 
         $esims = $query->limit($limit)->get();
+
+        $assignedExcluded = 0;
+        if ($availableOnly && $esims->isEmpty()) {
+            $assignedExcluded = $this->matchingCount($suffix, $simType, true);
+        }
 
         $assignedEsimIds = UserEsim::query()
             ->whereIn('esim_id', $esims->pluck('id'))
@@ -85,8 +111,50 @@ class EsimLookupController extends Controller
             'query' => $suffix,
             'min_length' => $minLength,
             'count' => $suggestions->count(),
+            'assigned_matches_excluded' => $assignedExcluded,
+            'hint' => $assignedExcluded > 0
+                ? 'Matching SIM(s) exist but are already assigned. Try another card or search without available_only.'
+                : null,
             'suggestions' => $suggestions,
         ]);
+    }
+
+    private function matchingCount(string $suffix, string $simType, bool $assignedOnly): int
+    {
+        $escaped = $this->escapeLike($suffix);
+        $likeSuffix = '%'.$escaped;
+        $likePrefix = $escaped.'%';
+        $likeContains = '%'.$escaped.'%';
+
+        $query = Esim::query()
+            ->whereNotNull('iccid')
+            ->where(function ($q) use ($suffix, $likeSuffix, $likePrefix, $likeContains) {
+                $q->where('iccid', 'like', $likeSuffix)
+                    ->orWhere('iccid', 'like', $likePrefix)
+                    ->orWhere('iccid', $suffix);
+
+                if (strlen($suffix) >= 10) {
+                    $q->orWhere('iccid', 'like', $likeContains);
+                }
+
+                $q->orWhere(function ($msisdnQ) use ($likeSuffix, $likePrefix) {
+                    $msisdnQ->whereNotNull('msisdn')
+                        ->where(function ($inner) use ($likeSuffix, $likePrefix) {
+                            $inner->where('msisdn', 'like', $likeSuffix)
+                                ->orWhere('msisdn', 'like', $likePrefix);
+                        });
+                });
+            });
+
+        if (in_array($simType, [Esim::SIM_TYPE_PHYSICAL, Esim::SIM_TYPE_ESIM], true)) {
+            $query->where('sim_type', $simType);
+        }
+
+        if ($assignedOnly) {
+            $query->whereIn('id', UserEsim::query()->select('esim_id'));
+        }
+
+        return $query->count();
     }
 
     private function normalizeIccidSuffix(string $value): string
