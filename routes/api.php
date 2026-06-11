@@ -23,6 +23,7 @@ use App\Http\Controllers\Admin\InventoryController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\AgentController;
 use App\Http\Controllers\Api\PhysicalSimIssuanceController;
+use App\Http\Controllers\Api\EsimLookupController;
 
 
 Route::prefix('auth')->group(function () {
@@ -92,6 +93,8 @@ Route::prefix('me')->middleware('auth:sanctum')->group(function () {
 // Agent app routes (use agent token — not /api/admin/*)
 Route::prefix('agent')->middleware(['auth:sanctum', 'agent'])->group(function () {
   Route::get('/orders/search', [OrderController::class, 'searchByOrderNumber']);
+  Route::get('/esims/search', [EsimLookupController::class, 'searchByIccidSuffix']);
+  Route::post('/orders/assign-sim', [PhysicalSimIssuanceController::class, 'assignPhysicalByOrder']);
   Route::post('/orders/issue-physical', [PhysicalSimIssuanceController::class, 'issueByOrder']);
   Route::patch('/location', [AgentController::class, 'updateMyLocation']);
 });
@@ -114,6 +117,7 @@ Route::prefix('admin')->middleware(['auth:sanctum', 'admin'])->group(function ()
   Route::get('/orders', [OrderController::class, 'getOrders']);
   Route::get('/orders/search', [OrderController::class, 'searchByOrderNumber']);
   Route::post('/orders/issue-physical', [PhysicalSimIssuanceController::class, 'issueByOrder']);
+  Route::post('/orders/assign-sim', [PhysicalSimIssuanceController::class, 'assignPhysicalByOrder']);
   Route::post('/user-esims/{id}/issue-physical', [PhysicalSimIssuanceController::class, 'issueByAssignment']);
   Route::get('/users/{userId}/orders', [OrderController::class, 'getOrdersByUser']);
 
@@ -125,6 +129,7 @@ Route::prefix('admin')->middleware(['auth:sanctum', 'admin'])->group(function ()
 
   // Service provider SIM inventory (local DB)
   Route::get('/service-providers/{provider}/sims', [ServiceProviderSimsController::class, 'index']);
+  Route::get('/esims/search', [EsimLookupController::class, 'searchByIccidSuffix']);
 
   // SIM stock levels + low-inventory alerts
   Route::get('/inventory/stock', [InventoryController::class, 'stock']);

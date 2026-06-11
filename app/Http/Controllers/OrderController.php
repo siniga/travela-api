@@ -12,6 +12,7 @@ use App\Models\Esim;
 use App\Models\UserEsim;
 use App\Services\EvPayService;
 use App\Services\PhysicalSimIssuanceService;
+use App\Services\SimAssignmentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +22,7 @@ class OrderController extends Controller
     public function __construct(
         private readonly EvPayService $evpay,
         private readonly PhysicalSimIssuanceService $physicalIssuance,
+        private readonly SimAssignmentService $simAssignment,
     ) {
     }
 
@@ -211,6 +213,11 @@ class OrderController extends Controller
                 $paymentRef = $checkout['payment_reference'] ?? null;
             }
 
+            $assignResult = null;
+            if ($paymentStatus === 'paid') {
+                $assignResult = $this->simAssignment->assignForPaidOrder($order);
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => 'Order stored successfully',
@@ -222,6 +229,7 @@ class OrderController extends Controller
                     'currency' => $order->currency,
                     'payment_reference' => $paymentRef,
                     'checkout_url' => $checkoutUrl,
+                    'sim_assignment' => $this->simAssignment->assignmentSummary($assignResult),
                 ],
             ], 201);
         } catch (\Throwable $e) {

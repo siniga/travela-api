@@ -8,13 +8,12 @@ use App\Models\Esim;
 use App\Models\Order;
 use App\Models\UserEsim;
 use App\Services\OrderRechargeService;
-use App\Services\SimInventoryService;
+use App\Services\SimAssignmentService;
 use App\Services\UserEsimOrderLinkService;
 use App\Services\VodacomRechargePayload;
 use App\Services\VodacomSimManagerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class UserEsimController extends Controller
@@ -23,7 +22,7 @@ class UserEsimController extends Controller
         private readonly VodacomSimManagerService $vodacom,
         private readonly OrderRechargeService $orderRecharge,
         private readonly UserEsimOrderLinkService $esimOrderLink,
-        private readonly SimInventoryService $inventory,
+        private readonly SimAssignmentService $simAssignment,
     ) {
     }
 
@@ -66,8 +65,46 @@ class UserEsimController extends Controller
             return $this->assignmentStatusResponse($existing, 'assigned');
         }
 
-        $available = $this->availableInventoryCount();
         $latestOrder = $this->esimOrderLink->latestOrderForUser($userId);
+        $latestPaid = $this->esimOrderLink->latestPaidOrderWithBundles($userId);
+
+        if (! $latestPaid) {
+            return response()->json([
+                'success' => false,
+                'status' => 'payment_required',
+                'has_sim' => false,
+                'poll_again' => false,
+                'message' => 'Complete payment before a SIM can be assigned.',
+                'latest_order' => $latestOrder,
+                'data' => null,
+            ], 200);
+        }
+
+        if (! $this->simAssignment->orderIsPaid($latestPaid)) {
+            return response()->json([
+                'success' => false,
+                'status' => 'payment_required',
+                'has_sim' => false,
+                'poll_again' => false,
+                'message' => 'Complete payment before a SIM can be assigned.',
+                'latest_order' => $latestOrder,
+                'data' => null,
+            ], 200);
+        }
+
+        if ($latestPaid && $this->simAssignment->orderSimType($latestPaid) === Esim::SIM_TYPE_PHYSICAL) {
+            return response()->json([
+                'success' => false,
+                'status' => 'waiting_for_agent',
+                'has_sim' => false,
+                'poll_again' => false,
+                'message' => 'Physical SIM orders are assigned by an agent after payment.',
+                'latest_order' => $latestOrder,
+                'data' => null,
+            ], 200);
+        }
+
+        $available = $this->simAssignment->availableCount(Esim::SIM_TYPE_ESIM);
 
         return response()->json([
             'success' => false,
@@ -76,10 +113,11 @@ class UserEsimController extends Controller
             'poll_again' => true,
             'retry_after_seconds' => 300,
             'message' => $available > 0
-                ? 'A number is available. Call POST /me/esims/register to assign it.'
-                : 'No numbers available yet. Keep polling until inventory is added.',
+                ? 'Payment complete. Call POST /me/esims/register to assign your eSIM.'
+                : 'Payment complete but no eSIM numbers available yet. Keep polling.',
             'inventory' => [
                 'available' => $available,
+                'sim_type' => Esim::SIM_TYPE_ESIM,
             ],
             'latest_order' => $latestOrder,
             'data' => null,
@@ -104,37 +142,16 @@ class UserEsimController extends Controller
         }
 
         try {
-            $result = DB::transaction(function () use ($userId) {
-                $existing = UserEsim::query()
-                    ->where('user_id', $userId)
-                    ->whereHas('esim', fn ($q) => $q->whereNotNull('msisdn')->where('msisdn', '!=', ''))
-                    ->with('esim')
-                    ->lockForUpdate()
-                    ->first();
-
-                if ($existing) {
-                    return ['assignment' => $existing, 'created' => false];
-                }
-
-                $esim = $this->nextAvailableEsimQuery()->lockForUpdate()->first();
-
-                if (! $esim || UserEsim::where('esim_id', $esim->id)->exists()) {
-                    return ['assignment' => null, 'created' => false];
-                }
-
-                $assignment = UserEsim::create([
-                    'user_id' => $userId,
-                    'esim_id' => $esim->id,
-                ]);
-
-                $esim->update(['status' => 'MANAGED']);
-
-                $assignment = $this->esimOrderLink->linkAssignmentFromLatestPaidOrder($assignment);
-
-                $assignment->load(['esim', 'bundle', 'order', 'orderItem']);
-
-                return ['assignment' => $assignment, 'created' => true];
-            });
+            $result = $this->simAssignment->assignEsimForUserIfEligible($userId);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'status' => 'not_eligible',
+                'has_sim' => false,
+                'poll_again' => false,
+                'message' => collect($e->errors())->flatten()->first(),
+                'errors' => $e->errors(),
+            ], 422);
         } catch (\Throwable $e) {
             return response()->json([
                 'success' => false,
@@ -144,30 +161,38 @@ class UserEsimController extends Controller
             ], 500);
         }
 
-        if (! $result['assignment']) {
-            $available = $this->availableInventoryCount();
+        if (! ($result['assigned'] ?? false)) {
             $latestOrder = $this->esimOrderLink->latestOrderForUser($userId);
 
             return response()->json([
                 'success' => false,
-                'status' => 'waiting_for_inventory',
+                'status' => ($result['reason'] ?? '') === 'no_esim_inventory' ? 'waiting_for_inventory' : 'not_assigned',
                 'has_sim' => false,
-                'poll_again' => true,
+                'poll_again' => ($result['reason'] ?? '') === 'no_esim_inventory',
                 'retry_after_seconds' => 300,
-                'message' => 'No unassigned numbers in inventory yet. Retry in a few minutes.',
+                'message' => match ($result['reason'] ?? '') {
+                    'no_esim_inventory' => 'No eSIM numbers available yet. Retry in a few minutes.',
+                    'payment_not_paid' => 'Complete payment before a SIM can be assigned.',
+                    default => 'SIM could not be assigned.',
+                },
                 'inventory' => [
-                    'available' => $available,
+                    'available' => $this->simAssignment->availableCount(Esim::SIM_TYPE_ESIM),
+                    'sim_type' => Esim::SIM_TYPE_ESIM,
                 ],
                 'latest_order' => $latestOrder,
                 'data' => null,
             ], 200);
         }
 
+        $assignment = $result['assignment'];
+        $created = ($result['reason'] ?? '') === 'assigned';
+
         return $this->registrationResponse(
-            $result['assignment'],
-            $result['created'],
-            $result['created'] ? 201 : 200,
-            $result['created'] ? 'assigned' : 'already_assigned',
+            $assignment,
+            $created,
+            $created ? 201 : 200,
+            $created ? 'assigned' : 'already_assigned',
+            $result['recharge'] ?? null,
         );
     }
 
@@ -239,6 +264,7 @@ class UserEsimController extends Controller
         bool $created,
         int $status,
         string $assignmentStatus = 'assigned',
+        ?array $recharge = null,
     ): JsonResponse {
         $assignment->loadMissing(['esim', 'bundle', 'order', 'orderItem']);
 
@@ -250,7 +276,7 @@ class UserEsimController extends Controller
             'message' => $created ? 'SIM assigned successfully' : 'SIM already assigned',
             'data' => $assignment->toAssignmentArray(),
             'latest_order' => $this->esimOrderLink->latestOrderForUser((int) $assignment->user_id),
-            'recharge' => $created ? $this->fulfillLatestPaidOrder($assignment->user_id) : null,
+            'recharge' => $recharge ?? ($created ? $this->fulfillLatestPaidOrder($assignment->user_id) : null),
         ], $status);
     }
 
@@ -278,27 +304,7 @@ class UserEsimController extends Controller
             ->first();
     }
 
-    private function nextAvailableEsimQuery()
-    {
-        return Esim::query()
-            ->whereNotNull('msisdn')
-            ->where('msisdn', '!=', '')
-            ->where('provider_status', Esim::PROVIDER_STATUS_ACTIVE)
-            ->whereNotIn('id', UserEsim::query()->select('esim_id'))
-            ->orderBy('id');
-    }
-
-    private function availableInventoryCount(): int
-    {
-        $networkId = (int) config('travela.inventory.default_network_id', 1);
-        $stock = $this->inventory->stockLevels($networkId);
-
-        return (int) $stock['available'];
-    }
-
     /**
-     * Fulfill the user's latest paid order (payment already completed) via Vodacom recharge per bundle item.
-     *
      * @return array<string, mixed>|null
      */
     private function fulfillLatestPaidOrder(int $userId): ?array
@@ -339,9 +345,6 @@ class UserEsimController extends Controller
         }
     }
 
-    /**
-     * @param  array<string, mixed>  $payload
-     */
     /**
      * @param  array<string, mixed>  $payload
      */

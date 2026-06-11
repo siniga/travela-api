@@ -17,6 +17,14 @@
     {
       "key": "agent_token",
       "value": ""
+    },
+    {
+      "key": "customer_token",
+      "value": ""
+    },
+    {
+      "key": "draft_id",
+      "value": "DRAFT-POSTMAN-ESIM-001"
     }
   ],
   "item": [
@@ -154,6 +162,49 @@
       "response": []
     },
     {
+      "name": "Agent — ICCID autocomplete (last digits)",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [{ "key": "token", "value": "{{agent_token}}", "type": "string" }]
+        },
+        "method": "GET",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "url": {
+          "raw": "{{base_url}}/agent/esims/search?iccid=0488&sim_type=physical",
+          "host": ["{{base_url}}"],
+          "path": ["agent", "esims", "search"],
+          "query": [
+            { "key": "iccid", "value": "0488" },
+            { "key": "sim_type", "value": "physical" }
+          ]
+        },
+        "description": "Type the last 4 digits of the ICCID as the user types. Returns matching suggestions with full `iccid`, `msisdn`, and `label` for autocomplete."
+      },
+      "response": []
+    },
+    {
+      "name": "Agent — Assign physical SIM to paid order",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [{ "key": "token", "value": "{{agent_token}}", "type": "string" }]
+        },
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"draft_id\": \"{{draft_id}}\",\n  \"iccid\": \"8925504500855150488\"\n}"
+        },
+        "url": "{{base_url}}/agent/orders/assign-sim",
+        "description": "Agent only. Order must be **paid** and **simType: physical**. Assigns the ICCID from inventory, links bundle, triggers recharge. Call **before** issue-physical."
+      },
+      "response": []
+    },
+    {
       "name": "Agent — Mark physical SIM issued",
       "request": {
         "auth": {
@@ -167,7 +218,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"draft_id\": \"DRAFT-2026-1778933916188\",\n  \"msisdn\": \"255798091323\",\n  \"location\": \"Terminal 1A, Counter 3\"\n}"
+          "raw": "{\n  \"draft_id\": \"{{draft_id}}\",\n  \"location\": \"Terminal 1A, Counter 3\"\n}"
         },
         "url": "{{base_url}}/agent/orders/issue-physical",
         "description": "Agent only. Call after physically handing the SIM card to the customer. Updates `physical_issued_at`, `physical_issued_by`, and `physical_issued_location` on the assignment."
@@ -192,6 +243,161 @@
         },
         "url": "{{base_url}}/agent/location",
         "description": "Agent only. Same as PATCH /me/agent-location. Updates `current_location`."
+      },
+      "response": []
+    },
+    {
+      "name": "SIM enforcement — Customer login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const json = pm.response.json();",
+              "if (json.token) {",
+              "  pm.collectionVariables.set('customer_token', json.token);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"john.doe@example.com\",\n  \"password\": \"password123\",\n  \"device\": \"postman\"\n}"
+        },
+        "url": "{{base_url}}/auth/login",
+        "description": "Verified customer (user_id 2). Saves `customer_token`."
+      },
+      "response": []
+    },
+    {
+      "name": "SIM enforcement — Create order (eSIM, paid)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "pm.collectionVariables.set('draft_id', 'DRAFT-ESIM-' + Date.now());"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const json = pm.response.json();",
+              "pm.test('sim_assignment present', () => pm.expect(json.data.sim_assignment).to.be.an('object'));",
+              "if (json.data?.sim_assignment?.assigned) {",
+              "  pm.test('eSIM auto-assigned', () => pm.expect(json.data.sim_assignment.reason).to.eql('assigned'));",
+              "} else {",
+              "  pm.test('no esim inventory or already assigned', () => pm.expect(['no_esim_inventory','already_assigned']).to.include(json.data.sim_assignment.reason));",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [{ "key": "token", "value": "{{customer_token}}", "type": "string" }]
+        },
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"draft_id\": \"{{draft_id}}\",\n  \"user_id\": 2,\n  \"simType\": \"esim\",\n  \"country\": \"TZ\",\n  \"countryName\": \"Tanzania\",\n  \"trip\": {\n    \"destination_country\": \"KE\",\n    \"arrival_date\": \"2026-07-01\",\n    \"departure_date\": \"2026-07-10\",\n    \"duration_days\": 9\n  },\n  \"items\": [\n    {\n      \"type\": \"bundle\",\n      \"bundle_id\": 1,\n      \"bundle_name\": \"Starter 1GB\",\n      \"data_amount\": 1,\n      \"validity_days\": 30,\n      \"price\": 25,\n      \"currency\": \"USD\"\n    }\n  ],\n  \"pricing\": {\n    \"subtotal\": 25,\n    \"discount_amount\": 0,\n    \"total_amount\": 25,\n    \"currency\": \"USD\"\n  },\n  \"kyc\": {\n    \"passport_id\": \"A1234567\",\n    \"passport_country\": \"TZ\",\n    \"nationality\": \"Tanzanian\",\n    \"gender\": \"Male\",\n    \"reason_for_travel\": \"tourism\"\n  },\n  \"payment\": {\n    \"status\": \"paid\",\n    \"reference\": \"TEST-PAY-ESIM\",\n    \"method\": \"test\",\n    \"paid_at\": \"2026-06-05T12:00:00Z\"\n  },\n  \"order_metadata\": {\n    \"source\": \"postman\",\n    \"platform\": \"postman\",\n    \"created_at\": \"2026-06-05T12:00:00Z\"\n  }\n}"
+        },
+        "url": "{{base_url}}/orders",
+        "description": "Paid eSIM order → auto-assigns from inventory. Requires at least one free `esims` row with `sim_type=esim`. See guide for tinker prep."
+      },
+      "response": []
+    },
+    {
+      "name": "SIM enforcement — Create order (physical, paid)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "pm.collectionVariables.set('draft_id', 'DRAFT-PHYS-' + Date.now());"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const json = pm.response.json();",
+              "pm.test('physical not auto-assigned', () => {",
+              "  pm.expect(json.data.sim_assignment.assigned).to.eql(false);",
+              "  pm.expect(json.data.sim_assignment.reason).to.eql('physical_requires_agent');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [{ "key": "token", "value": "{{customer_token}}", "type": "string" }]
+        },
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"draft_id\": \"{{draft_id}}\",\n  \"user_id\": 2,\n  \"simType\": \"physical\",\n  \"country\": \"TZ\",\n  \"trip\": {\n    \"destination_country\": \"KE\",\n    \"arrival_date\": \"2026-07-01\",\n    \"departure_date\": \"2026-07-10\",\n    \"duration_days\": 9\n  },\n  \"items\": [\n    {\n      \"type\": \"bundle\",\n      \"bundle_id\": 1,\n      \"bundle_name\": \"Starter 1GB\",\n      \"data_amount\": 1,\n      \"validity_days\": 30,\n      \"price\": 25,\n      \"currency\": \"USD\"\n    }\n  ],\n  \"pricing\": {\n    \"subtotal\": 25,\n    \"discount_amount\": 0,\n    \"total_amount\": 25,\n    \"currency\": \"USD\"\n  },\n  \"kyc\": {\n    \"passport_id\": \"A1234567\",\n    \"passport_country\": \"TZ\",\n    \"nationality\": \"Tanzanian\",\n    \"gender\": \"Male\",\n    \"reason_for_travel\": \"tourism\"\n  },\n  \"payment\": {\n    \"status\": \"paid\",\n    \"reference\": \"TEST-PAY-PHYS\",\n    \"method\": \"test\",\n    \"paid_at\": \"2026-06-05T12:00:00Z\"\n  },\n  \"order_metadata\": {\n    \"source\": \"postman\",\n    \"platform\": \"postman\",\n    \"created_at\": \"2026-06-05T12:00:00Z\"\n  }\n}"
+        },
+        "url": "{{base_url}}/orders",
+        "description": "Paid physical order → `sim_assignment.reason` must be `physical_requires_agent`. Agent assigns ICCID next."
+      },
+      "response": []
+    },
+    {
+      "name": "SIM enforcement — Customer assignment status",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [{ "key": "token", "value": "{{customer_token}}", "type": "string" }]
+        },
+        "method": "GET",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "url": "{{base_url}}/me/esims/assignment-status",
+        "description": "Poll without side effects. Physical paid → `waiting_for_agent`. Unpaid → `payment_required`. eSIM paid unassigned → `waiting_for_inventory`."
+      },
+      "response": []
+    },
+    {
+      "name": "SIM enforcement — Customer register (eSIM only)",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [{ "key": "token", "value": "{{customer_token}}", "type": "string" }]
+        },
+        "method": "POST",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{}" },
+        "url": "{{base_url}}/me/esims/register",
+        "description": "Self-service fallback for **eSIM** orders only. Returns 422 if latest paid order is physical."
       },
       "response": []
     }

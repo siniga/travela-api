@@ -54,46 +54,19 @@ return new class extends Migration
         // - user_id NOT NULL
         // - esim_id NOT NULL + unique (cannot be re-assigned)
         // - keep old rows as-is; new assignments must comply
-        // Drop existing keys/FKs safely (Blueprint try/catch won't help because MySQL errors occur at execution time).
-        $indexes = collect(DB::select('SHOW INDEX FROM `user_esims`'))
-            ->pluck('Key_name')
-            ->unique()
-            ->values()
-            ->all();
-
-        foreach (['user_esims_user_id_foreign', 'user_esims_msisdn_unique', 'user_esims_user_id_msisdn_unique', 'user_esims_msisdn_index'] as $key) {
-            if (in_array($key, $indexes, true)) {
-                // Foreign keys are dropped via Schema below; indexes can be dropped directly.
-                if (! str_ends_with($key, '_foreign')) {
-                    DB::statement("ALTER TABLE `user_esims` DROP INDEX `$key`");
-                }
-            }
-        }
-
-        // Drop foreign keys if they exist
-        $fkNames = collect(DB::select("
-            SELECT CONSTRAINT_NAME
-            FROM information_schema.KEY_COLUMN_USAGE
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'user_esims'
-              AND REFERENCED_TABLE_NAME IS NOT NULL
-        "))->pluck('CONSTRAINT_NAME')->all();
-
-        foreach (['user_esims_user_id_foreign', 'user_esims_esim_id_foreign'] as $fk) {
-            if (in_array($fk, $fkNames, true)) {
-                DB::statement("ALTER TABLE `user_esims` DROP FOREIGN KEY `$fk`");
-            }
-        }
+        $this->dropLegacyUserEsimConstraints();
 
         // Remove any legacy rows that cannot be represented as assignments.
         // (Earlier seeds may have inserted inventory-like rows with user_id NULL.)
         DB::table('user_esims')->whereNull('user_id')->delete();
         DB::table('user_esims')->whereNull('esim_id')->delete();
 
-        Schema::table('user_esims', function (Blueprint $table) {
-            $table->unsignedBigInteger('user_id')->nullable(false)->change();
-            $table->unsignedBigInteger('esim_id')->nullable(false)->change();
-        });
+        if (Schema::getConnection()->getDriverName() === 'mysql') {
+            Schema::table('user_esims', function (Blueprint $table) {
+                $table->unsignedBigInteger('user_id')->nullable(false)->change();
+                $table->unsignedBigInteger('esim_id')->nullable(false)->change();
+            });
+        }
 
         Schema::table('user_esims', function (Blueprint $table) {
             $table->foreign('user_id')->references('id')->on('users')->cascadeOnDelete();
@@ -114,6 +87,57 @@ return new class extends Migration
     public function down(): void
     {
         // Not supported (destructive refactor).
+    }
+
+    private function dropLegacyUserEsimConstraints(): void
+    {
+        if (Schema::getConnection()->getDriverName() === 'mysql') {
+            $indexes = collect(DB::select('SHOW INDEX FROM `user_esims`'))
+                ->pluck('Key_name')
+                ->unique()
+                ->values()
+                ->all();
+
+            foreach (['user_esims_user_id_foreign', 'user_esims_msisdn_unique', 'user_esims_user_id_msisdn_unique', 'user_esims_msisdn_index'] as $key) {
+                if (in_array($key, $indexes, true) && ! str_ends_with($key, '_foreign')) {
+                    DB::statement("ALTER TABLE `user_esims` DROP INDEX `$key`");
+                }
+            }
+
+            $fkNames = collect(DB::select("
+                SELECT CONSTRAINT_NAME
+                FROM information_schema.KEY_COLUMN_USAGE
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'user_esims'
+                  AND REFERENCED_TABLE_NAME IS NOT NULL
+            "))->pluck('CONSTRAINT_NAME')->all();
+
+            foreach (['user_esims_user_id_foreign', 'user_esims_esim_id_foreign'] as $fk) {
+                if (in_array($fk, $fkNames, true)) {
+                    DB::statement("ALTER TABLE `user_esims` DROP FOREIGN KEY `$fk`");
+                }
+            }
+
+            return;
+        }
+
+        foreach ([
+            fn () => Schema::table('user_esims', fn (Blueprint $table) => $table->dropForeign(['user_id'])),
+            fn () => Schema::table('user_esims', fn (Blueprint $table) => $table->dropUnique(['msisdn'])),
+            fn () => Schema::table('user_esims', fn (Blueprint $table) => $table->dropUnique(['user_id', 'msisdn'])),
+            fn () => Schema::table('user_esims', fn (Blueprint $table) => $table->dropIndex(['msisdn'])),
+        ] as $drop) {
+            $this->trySchemaChange($drop);
+        }
+    }
+
+    private function trySchemaChange(callable $change): void
+    {
+        try {
+            $change();
+        } catch (\Throwable) {
+            // Constraint/index may already be absent depending on migration order.
+        }
     }
 };
 

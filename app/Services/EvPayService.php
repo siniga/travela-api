@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Esim;
 use App\Models\Order;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -11,6 +12,7 @@ class EvPayService
 {
     public function __construct(
         private readonly OrderRechargeService $orderRecharge,
+        private readonly SimAssignmentService $simAssignment,
     ) {
     }
 
@@ -224,19 +226,23 @@ class EvPayService
         $order->refresh();
 
         if ($isPaid) {
-            try {
-                $this->orderRecharge->rechargePaidOrder($order, [
-                    'payment_id' => $this->extractGatewayPaymentId($payload),
-                    'transaction_reference' => $reference,
-                ]);
-            } catch (\Throwable $e) {
-                Log::error('Order recharge fulfillment failed after EvPay callback', [
-                    'order_id' => $order->id,
-                    'user_id' => $order->user_id,
-                    'payment_id' => $this->extractGatewayPaymentId($payload),
-                    'transaction_reference' => $reference,
-                    'error' => $e->getMessage(),
-                ]);
+            $assignResult = $this->simAssignment->assignForPaidOrder($order);
+
+            if (($assignResult['sim_type'] ?? null) === Esim::SIM_TYPE_ESIM) {
+                try {
+                    $this->orderRecharge->rechargePaidOrder($order, [
+                        'payment_id' => $this->extractGatewayPaymentId($payload),
+                        'transaction_reference' => $reference,
+                    ]);
+                } catch (\Throwable $e) {
+                    Log::error('Order recharge fulfillment failed after EvPay callback', [
+                        'order_id' => $order->id,
+                        'user_id' => $order->user_id,
+                        'payment_id' => $this->extractGatewayPaymentId($payload),
+                        'transaction_reference' => $reference,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
             }
         }
 

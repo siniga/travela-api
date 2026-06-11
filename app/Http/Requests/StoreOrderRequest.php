@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests;
 
+use App\Models\Esim;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Validator;
 
 class StoreOrderRequest extends FormRequest
 {
@@ -20,7 +22,7 @@ class StoreOrderRequest extends FormRequest
             'checkoutMode' => ['nullable', 'string', 'max:40'],
             'country' => ['nullable', 'string', 'max:10'],
             'countryName' => ['nullable', 'string', 'max:120'],
-            'simType' => ['nullable', 'string', 'in:esim,physical'],
+            'simType' => ['required', 'string', 'in:esim,physical'],
             'msisdn' => ['nullable', 'string', 'max:20'],
             'esim_id' => ['nullable', 'integer', 'exists:esims,id'],
             'user_esim_id' => ['nullable', 'integer', 'exists:user_esims,id'],
@@ -82,5 +84,29 @@ class StoreOrderRequest extends FormRequest
             $trip['destination_country'] = strtoupper($trip['destination_country']);
             $this->merge(['trip' => $trip]);
         }
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $validator) {
+            $simType = $this->input('simType');
+            if (! $simType) {
+                return;
+            }
+
+            if ($this->filled('esim_id')) {
+                $esim = Esim::find($this->input('esim_id'));
+                if ($esim && $esim->sim_type !== $simType) {
+                    $validator->errors()->add('esim_id', 'The selected SIM does not match simType.');
+                }
+            }
+
+            if ($this->filled('msisdn')) {
+                $esim = Esim::findByMsisdn((string) $this->input('msisdn'));
+                if ($esim && $esim->sim_type !== $simType) {
+                    $validator->errors()->add('msisdn', 'The selected SIM does not match simType.');
+                }
+            }
+        });
     }
 }
