@@ -14,6 +14,12 @@ class Esim extends Model
 
     public const PROVIDER_STATUS_SUSPENDED = 'suspended';
 
+    public const SALE_STATUS_AVAILABLE = 'available';
+
+    public const SALE_STATUS_SOLD = 'sold';
+
+    public const SALE_STATUS_USED = 'used';
+
     protected $fillable = [
         'sim_id',
         'msisdn',
@@ -22,8 +28,11 @@ class Esim extends Model
         'imsi',
         'description',
         'status',
+        'sale_status',
         'sim_type',
         'provider_status',
+        'qr_code_path',
+        'qr_code_data',
         'balances',
         'balance_fetched_at',
     ];

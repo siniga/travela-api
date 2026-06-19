@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\UserEsimController;
 use App\Http\Controllers\Api\AdminUserEsimController;
 use App\Http\Controllers\Admin\AdminDashboard;
 use App\Http\Controllers\Admin\ServiceProviderSimsController;
+use App\Http\Controllers\Admin\EsimImportController;
 use App\Http\Controllers\Admin\InventoryController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\AgentController;
@@ -128,6 +129,12 @@ Route::prefix('admin')->middleware(['auth:sanctum', 'admin'])->group(function ()
   Route::get('/dashboard/stats', [AdminDashboard::class, 'stats']);
   Route::get('/dashboard/esims-issued', [AdminDashboard::class, 'esimsIssued']);
   Route::get('/dashboard/esim-activities', [AdminDashboard::class, 'esimIssuedActivities']);
+
+  // eSIM PDF import (admin frontend)
+  Route::post('/esims/import', [EsimImportController::class, 'import']);
+  Route::get('/esims', [EsimImportController::class, 'index']);
+  Route::get('/esims/{id}/qr', [EsimImportController::class, 'qr'])->whereNumber('id');
+  Route::get('/esims/{id}', [EsimImportController::class, 'show'])->whereNumber('id');
 
   // Service provider SIM inventory (local DB)
   Route::get('/service-providers/{provider}/sims', [ServiceProviderSimsController::class, 'index']);
