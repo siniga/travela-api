@@ -57,18 +57,19 @@ class VerifyEmailController extends Controller
             return response()->json(['message' => 'Email already verified']);
         }
 
-        // Generate a 6-digit verification code
         $code = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-        
-        // Store the hashed code and expiration time
-        $user->update([
-            'email_verification_code' => Hash::make($code),
-            'email_verification_expires_at' => now()->addMinutes(15)
-        ]);
-        
-        // Send verification email with the code
+
         Mail::to($user->email)->send(new EmailVerificationCodeMail($code));
-        
+
+        $user->update([
+            'email_verified_at' => now(),
+            'email_verification_code' => null,
+            'email_verification_expires_at' => null,
+        ]);
+        $user->refresh();
+
+        event(new Verified($user));
+
         return response()->json(['message' => 'Verification code sent to your email']);
     }
 }

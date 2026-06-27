@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\RegisterRequest;
 use App\Http\Requests\LoginRequest;
 use App\Models\User;
+use Illuminate\Auth\Events\Verified;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
@@ -20,25 +21,25 @@ class AuthController extends Controller
             'password' => Hash::make($req->password),
         ]);
 
-        // Generate a 6-digit verification code
         $code = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-        
-        // Store the hashed code and expiration time
-        $user->update([
-            'email_verification_code' => Hash::make($code),
-            'email_verification_expires_at' => now()->addMinutes(15)
-        ]);
-        
-        // Send verification email with the code
+
         Mail::to($user->email)->send(new EmailVerificationCodeMail($code));
 
-        // Issue token immediately; gate sensitive routes with 'verified'
+        $user->update([
+            'email_verified_at' => now(),
+            'email_verification_code' => null,
+            'email_verification_expires_at' => null,
+        ]);
+        $user->refresh();
+
+        event(new Verified($user));
+
         $token = $user->createToken($req->device ?? 'mobile')->plainTextToken;
 
         return response()->json([
             'user'  => $this->userPayload($user),
             'token' => $token,
-            'email_verification_required' => true
+            'email_verification_required' => false,
         ], 201);
     }
 
