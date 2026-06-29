@@ -30,8 +30,9 @@ class PasswordResetController extends Controller
             'reset_code_expires_at' => now()->addMinutes(15)
         ]);
         
-        // Send custom email with the code
-        Mail::to($user->email)->send(new PasswordResetCodeMail($code));
+        $setPasswordUrl = 'https://thetravela.com/set-password?email='.urlencode($user->email);
+
+        Mail::to($user->email)->send(new PasswordResetCodeMail($code, $setPasswordUrl));
         
         return response()->json(['message' => 'Reset code sent to your email']);
     }

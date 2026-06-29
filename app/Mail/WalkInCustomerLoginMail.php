@@ -15,7 +15,7 @@ class WalkInCustomerLoginMail extends Mailable
     public function __construct(
         public readonly string $customerName,
         public readonly string $code,
-        public readonly string $loginUrl = 'https://thetravela.com/',
+        public readonly string $setPasswordUrl = 'https://thetravela.com/set-password',
     ) {
     }
 
@@ -29,7 +29,7 @@ class WalkInCustomerLoginMail extends Mailable
     public function content(): Content
     {
         $name = e($this->customerName);
-        $loginUrl = e($this->loginUrl);
+        $setPasswordUrl = e($this->setPasswordUrl);
         $code = e($this->code);
 
         return new Content(
@@ -38,17 +38,17 @@ class WalkInCustomerLoginMail extends Mailable
                     <h2 style='color: #333; text-align: center;'>Welcome to Travela</h2>
                     <p style='color: #666; font-size: 16px; line-height: 1.5;'>
                         Hi {$name}, your physical Travela SIM has been registered at our counter.
-                        Sign in to manage your account and bundles:
+                        Set your password to sign in and manage your account and bundles:
                     </p>
                     <p style='text-align: center; margin: 24px 0;'>
-                        <a href='{$loginUrl}' style='display: inline-block; background-color: #2563eb; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;'>
-                            Go to Travela
+                        <a href='{$setPasswordUrl}' style='display: inline-block; background-color: #2563eb; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;'>
+                            Set your password
                         </a>
                     </p>
                     <p style='color: #666; font-size: 16px; line-height: 1.5;'>
-                        To set your password, open
-                        <a href='{$loginUrl}'>{$loginUrl}</a>
-                        and use <strong>Forgot password</strong> with this one-time code:
+                        Or open
+                        <a href='{$setPasswordUrl}'>{$setPasswordUrl}</a>
+                        and enter this one-time code:
                     </p>
                     <div style='background-color: #f5f5f5; padding: 20px; text-align: center; margin: 20px 0; border-radius: 8px;'>
                         <h1 style='color: #333; font-size: 32px; letter-spacing: 8px; margin: 0; font-family: monospace;'>{$code}</h1>

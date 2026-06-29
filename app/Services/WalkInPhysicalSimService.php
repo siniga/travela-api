@@ -169,7 +169,9 @@ class WalkInPhysicalSimService
         ]);
 
         try {
-            Mail::to($user->email)->send(new WalkInCustomerLoginMail($customerName, $code));
+            $setPasswordUrl = 'https://thetravela.com/set-password?email='.urlencode($user->email);
+
+            Mail::to($user->email)->send(new WalkInCustomerLoginMail($customerName, $code, $setPasswordUrl));
 
             return true;
         } catch (\Throwable $e) {
