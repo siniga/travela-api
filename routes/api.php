@@ -101,6 +101,7 @@ Route::prefix('agent')->middleware(['auth:sanctum', 'agent'])->group(function ()
   Route::get('/esims/search', [EsimLookupController::class, 'searchByIccidSuffix']);
   Route::post('/orders/assign-sim', [PhysicalSimIssuanceController::class, 'assignPhysicalByOrder']);
   Route::post('/orders/issue-physical', [PhysicalSimIssuanceController::class, 'issueByOrder']);
+  Route::post('/physical-sims/assign', [PhysicalSimIssuanceController::class, 'assignWalkIn']);
   Route::patch('/location', [AgentController::class, 'updateMyLocation']);
 });
 
@@ -123,6 +124,7 @@ Route::prefix('admin')->middleware(['auth:sanctum', 'admin'])->group(function ()
   Route::get('/orders/search', [OrderController::class, 'searchByOrderNumber']);
   Route::post('/orders/issue-physical', [PhysicalSimIssuanceController::class, 'issueByOrder']);
   Route::post('/orders/assign-sim', [PhysicalSimIssuanceController::class, 'assignPhysicalByOrder']);
+  Route::post('/physical-sims/assign', [PhysicalSimIssuanceController::class, 'assignWalkIn']);
   Route::post('/user-esims/{id}/issue-physical', [PhysicalSimIssuanceController::class, 'issueByAssignment']);
   Route::get('/users/{userId}/orders', [OrderController::class, 'getOrdersByUser']);
 

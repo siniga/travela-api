@@ -58,7 +58,7 @@ class EsimLookupController extends Controller
         }
 
         if ($availableOnly) {
-            $query->whereNotIn('id', UserEsim::query()->select('esim_id'));
+            $query->availableForAssignment();
         }
 
         $esims = $query->limit($limit)->get();
@@ -68,26 +68,25 @@ class EsimLookupController extends Controller
             $assignedExcluded = $this->matchingCount($suffix, $simType, true);
         }
 
-        $assignedEsimIds = UserEsim::query()
-            ->whereIn('esim_id', $esims->pluck('id'))
-            ->pluck('esim_id')
-            ->flip();
-
         $suffixLen = strlen($suffix);
 
-        $suggestions = $esims->map(fn (Esim $esim) => [
-            'id' => $esim->id,
-            'iccid' => $esim->iccid,
-            'iccid_suffix' => $esim->iccid ? substr($esim->iccid, -$suffixLen) : null,
-            'iccid_last_two' => $esim->iccid ? substr($esim->iccid, -2) : null,
-            'msisdn' => $esim->msisdn,
-            'sim_type' => $esim->sim_type,
-            'status' => $esim->status,
-            'provider_status' => $esim->provider_status,
-            'is_assigned' => isset($assignedEsimIds[$esim->id]),
-            'label' => trim(($esim->iccid ?? '').($esim->msisdn ? ' · '.$esim->msisdn : '')),
-            'value' => $esim->iccid,
-        ])->values();
+        $suggestions = $esims->map(function (Esim $esim) use ($suffixLen, $availableOnly) {
+            $iccidSuffix = $esim->iccid ? substr($esim->iccid, -$suffixLen) : null;
+
+            return [
+                'id' => $esim->id,
+                'iccid' => $esim->iccid,
+                'iccid_suffix' => $iccidSuffix,
+                'iccid_last_two' => $esim->iccid ? substr($esim->iccid, -2) : null,
+                'msisdn' => $esim->msisdn,
+                'sim_type' => $esim->sim_type,
+                'status' => $availableOnly ? 'available' : strtolower((string) $esim->status),
+                'provider_status' => $esim->provider_status,
+                'is_assigned' => false,
+                'label' => $iccidSuffix ? '…'.$iccidSuffix : trim($esim->iccid ?? ''),
+                'value' => $esim->iccid,
+            ];
+        })->values();
 
         return response()->json([
             'success' => true,

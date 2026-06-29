@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -78,6 +79,25 @@ class Esim extends Model
         return static::query()
             ->whereIn('msisdn', [$normalized, '+'.$normalized])
             ->first();
+    }
+
+    /**
+     * Inventory rows eligible for agent assignment (not linked to any user).
+     */
+    public function scopeAvailableForAssignment(Builder $query): Builder
+    {
+        return $query
+            ->where('status', 'AVAILABLE')
+            ->where(function (Builder $q) {
+                $q->whereNull('sale_status')
+                    ->orWhere('sale_status', self::SALE_STATUS_AVAILABLE);
+            })
+            ->whereNotIn('id', UserEsim::query()->select('esim_id'));
+    }
+
+    public function isAssigned(): bool
+    {
+        return UserEsim::query()->where('esim_id', $this->id)->exists();
     }
 }
 

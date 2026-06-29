@@ -9,9 +9,12 @@ use App\Models\UserEsim;
 use App\Services\OrderRechargeService;
 use App\Services\PhysicalSimIssuanceService;
 use App\Services\SimAssignmentService;
+use App\Services\WalkInPhysicalSimService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 class PhysicalSimIssuanceController extends Controller
 {
@@ -19,6 +22,7 @@ class PhysicalSimIssuanceController extends Controller
         private readonly PhysicalSimIssuanceService $issuance,
         private readonly SimAssignmentService $simAssignment,
         private readonly OrderRechargeService $orderRecharge,
+        private readonly WalkInPhysicalSimService $walkInPhysicalSim,
     ) {
     }
 
@@ -53,6 +57,47 @@ class PhysicalSimIssuanceController extends Controller
                     'reason' => 'assigned_by_agent',
                 ],
                 'recharge' => $recharge,
+            ],
+        ], 201);
+    }
+
+    /**
+     * Walk-in: assign an unassigned physical SIM to a customer without an order.
+     */
+    public function assignWalkIn(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'esim_id' => ['required', 'integer', 'exists:esims,id'],
+            'iccid' => ['nullable', 'string', 'max:50'],
+            'msisdn' => ['nullable', 'string', 'max:30'],
+            'customer_name' => ['required', 'string', 'max:255'],
+            'customer_email' => ['required', 'email', 'max:255'],
+            'location' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        try {
+            $result = $this->walkInPhysicalSim->assign($data, $request->user());
+        } catch (NotFoundHttpException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage() ?: 'SIM not found.',
+            ], 404);
+        } catch (ConflictHttpException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage() ?: 'SIM already assigned.',
+            ], 409);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Physical SIM assigned. Customer will receive a login email.',
+            'data' => [
+                'user_id' => $result['user_id'],
+                'esim_id' => $result['esim_id'],
+                'msisdn' => $result['msisdn'],
+                'iccid' => $result['iccid'],
+                'email_sent' => $result['email_sent'],
             ],
         ], 201);
     }
