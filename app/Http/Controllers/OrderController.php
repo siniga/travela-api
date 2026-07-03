@@ -502,6 +502,10 @@ class OrderController extends Controller
 
         $meta = $this->metadataArray($order);
 
+        $user = $order->user;
+        $customerName = $user?->name;
+        $customerEmail = $user?->email;
+
         return [
             'order' => array_merge($order->only([
                 'id',
@@ -536,6 +540,8 @@ class OrderController extends Controller
                 ]))
                 ->values()
                 ->all(),
+            'customer_name' => $customerName,
+            'customer_email' => $customerEmail,
             'user' => $order->user?->only(['id', 'name', 'email', 'role']),
             'user_esim' => $userEsim ? array_merge(
                 $userEsim->only([

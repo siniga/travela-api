@@ -44,6 +44,8 @@ class AgentOrderSearchTest extends TestCase
             ->assertJsonPath('suggestions.0.is_paid', true)
             ->assertJsonPath('suggestions.0.sim_type', Esim::SIM_TYPE_PHYSICAL)
             ->assertJsonPath('suggestions.0.has_sim_assignment', false)
+            ->assertJsonPath('suggestions.0.customer_name', 'Jane Traveler')
+            ->assertJsonPath('suggestions.0.customer_email', 'jane@example.com')
             ->assertJsonPath('suggestions.0.user.name', 'Jane Traveler')
             ->assertJsonPath('suggestions.0.user.email', 'jane@example.com')
             ->assertJsonPath('suggestions.0.bundle.bundle_name', 'Starter 1GB')

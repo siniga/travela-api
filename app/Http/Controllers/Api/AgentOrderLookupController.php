@@ -202,9 +202,11 @@ class AgentOrderLookupController extends Controller
      */
     private function formatAgentOrderPayload(Order $order): array
     {
+        $order->loadMissing(['user', 'kyc']);
         $meta = is_array($order->metadata) ? $order->metadata : [];
         $simType = $meta['simType'] ?? null;
         $isPaid = $this->simAssignment->orderIsPaid($order);
+        $customer = $this->customerDetailsForOrder($order);
 
         $primaryItem = $order->orderItems->first();
 
@@ -219,7 +221,9 @@ class AgentOrderLookupController extends Controller
             'total_amount' => $order->total_amount,
             'currency' => $order->currency,
             'paid_at' => $order->paid_at,
-            'user' => $order->user?->only(['id', 'name', 'email', 'role']),
+            'customer_name' => $customer['name'],
+            'customer_email' => $customer['email'],
+            'user' => $customer['user'],
             'bundle' => $primaryItem ? [
                 'bundle_id' => $primaryItem->bundle_id,
                 'bundle_name' => $primaryItem->bundle_name,
@@ -338,6 +342,7 @@ class AgentOrderLookupController extends Controller
         $meta = is_array($order->metadata) ? $order->metadata : [];
         $isPaid = $this->simAssignment->orderIsPaid($order);
         $assignment = $this->simAssignment->findAssignmentForOrder($order);
+        $customer = $this->customerDetailsForOrder($order);
         $primaryItem = $order->orderItems->first();
         $draftId = (string) $order->draft_id;
         $displaySuffix = substr($draftId, -max($suffixLen, self::MIN_ORDER_SUFFIX_LENGTH));
@@ -347,7 +352,9 @@ class AgentOrderLookupController extends Controller
             'draft_id' => $order->draft_id,
             'order_number' => $order->draft_id,
             'draft_id_suffix' => $displaySuffix,
-            'label' => '…'.$displaySuffix,
+            'label' => $customer['name']
+                ? $customer['name'].' · …'.$displaySuffix
+                : '…'.$displaySuffix,
             'value' => $order->draft_id,
             'status' => $order->status,
             'payment_status' => $order->payment_status,
@@ -357,7 +364,9 @@ class AgentOrderLookupController extends Controller
             'total_amount' => $order->total_amount,
             'currency' => $order->currency,
             'paid_at' => $order->paid_at,
-            'user' => $order->user?->only(['id', 'name', 'email', 'role']),
+            'customer_name' => $customer['name'],
+            'customer_email' => $customer['email'],
+            'user' => $customer['user'],
             'bundle' => $primaryItem ? $this->bundlePayload($primaryItem) : null,
             'order_items' => $order->orderItems
                 ->map(fn (OrderItem $item) => $this->bundlePayload($item))
@@ -400,5 +409,36 @@ class AgentOrderLookupController extends Controller
     private function escapeLike(string $value): string
     {
         return str_replace(['\\', '%', '_'], ['\\\\', '\%', '\_'], $value);
+    }
+
+    /**
+     * @return array{name: ?string, email: ?string, user: ?array{id: int, name: string, email: string, role: string}}
+     */
+    private function customerDetailsForOrder(Order $order): array
+    {
+        $user = $order->user;
+
+        if (! $user && $order->user_id) {
+            $order->loadMissing('user');
+            $user = $order->user;
+        }
+
+        if (! $user && $order->relationLoaded('kyc') && $order->kyc?->user_id) {
+            $order->kyc->loadMissing('user');
+            $user = $order->kyc->user;
+        }
+
+        $meta = is_array($order->metadata) ? $order->metadata : [];
+
+        $name = $user?->name
+            ?? (is_string($meta['customer_name'] ?? null) ? $meta['customer_name'] : null);
+        $email = $user?->email
+            ?? (is_string($meta['customer_email'] ?? null) ? $meta['customer_email'] : null);
+
+        return [
+            'name' => $name,
+            'email' => $email,
+            'user' => $user?->only(['id', 'name', 'email', 'role']),
+        ];
     }
 }
