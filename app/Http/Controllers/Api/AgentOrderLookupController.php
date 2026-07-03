@@ -5,18 +5,94 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Esim;
 use App\Models\Order;
+use App\Models\OrderItem;
 use App\Models\UserEsim;
 use App\Services\SimAssignmentService;
 use App\Services\UserEsimOrderLinkService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 
 class AgentOrderLookupController extends Controller
 {
+    /** Order numbers are matched from the trailing digits the agent types at the counter. */
+    private const MIN_ORDER_SUFFIX_LENGTH = 3;
+
     public function __construct(
         private readonly SimAssignmentService $simAssignment,
         private readonly UserEsimOrderLinkService $esimOrderLink,
     ) {
+    }
+
+    /**
+     * Counter lookup: match paid physical orders by the last digits of draft_id.
+     *
+     * Query: order_suffix, draft_id, order_number, or q. Optional physical_only, paid_only,
+     * unassigned_only (default true), limit.
+     */
+    public function searchByOrderSuffix(Request $request): JsonResponse
+    {
+        $raw = trim((string) (
+            $request->query('order_suffix')
+            ?? $request->query('draft_id')
+            ?? $request->query('order_number')
+            ?? $request->query('q')
+            ?? ''
+        ));
+
+        if ($raw === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Provide order_suffix, draft_id, order_number, or q (last digits of the order number).',
+                'min_length' => self::MIN_ORDER_SUFFIX_LENGTH,
+                'suggestions' => [],
+            ], 422);
+        }
+
+        if ($this->looksLikeFullOrderNumber($raw)) {
+            $order = $this->baseOrderQuery($request)->where('draft_id', $raw)->first();
+            if ($order) {
+                return response()->json([
+                    'success' => true,
+                    'query' => $raw,
+                    'match_mode' => 'exact',
+                    'count' => 1,
+                    'suggestions' => [$this->formatOrderSuggestion($order, strlen($raw))],
+                ]);
+            }
+        }
+
+        $suffix = $this->normalizeOrderSuffix($raw);
+        $suffixDigits = preg_replace('/\D+/', '', $suffix) ?? '';
+
+        if ($suffixDigits !== '' && strlen($suffixDigits) < self::MIN_ORDER_SUFFIX_LENGTH
+            && strlen($suffix) < self::MIN_ORDER_SUFFIX_LENGTH) {
+            return response()->json([
+                'success' => true,
+                'query' => $suffix,
+                'min_length' => self::MIN_ORDER_SUFFIX_LENGTH,
+                'match_mode' => 'draft_id_suffix',
+                'message' => 'Type at least '.self::MIN_ORDER_SUFFIX_LENGTH.' characters from the end of the order number.',
+                'suggestions' => [],
+            ]);
+        }
+
+        $limit = min(max((int) $request->query('limit', 10), 1), 20);
+        $orders = $this->fetchSuffixOrderCandidates($request, $suffix, $suffixDigits, $limit);
+
+        $suffixLen = max(strlen($suffix), strlen($suffixDigits));
+
+        return response()->json([
+            'success' => true,
+            'query' => $suffix,
+            'min_length' => self::MIN_ORDER_SUFFIX_LENGTH,
+            'match_mode' => 'draft_id_suffix',
+            'count' => $orders->count(),
+            'suggestions' => $orders
+                ->map(fn (Order $order) => $this->formatOrderSuggestion($order, $suffixLen))
+                ->values(),
+        ]);
     }
 
     /**
@@ -168,5 +244,161 @@ class AgentOrderLookupController extends Controller
             'is_assigned' => $assignment !== null,
             'user_esim_id' => $assignment?->id,
         ];
+    }
+
+    private function looksLikeFullOrderNumber(string $value): bool
+    {
+        return str_starts_with(strtoupper($value), 'DRAFT-') || strlen($value) > 12;
+    }
+
+    private function normalizeOrderSuffix(string $value): string
+    {
+        return preg_replace('/\s+/', '', trim($value)) ?? '';
+    }
+
+    /**
+     * @return \Illuminate\Database\Eloquent\Builder<Order>
+     */
+    private function baseOrderQuery(Request $request): Builder
+    {
+        $query = Order::query()
+            ->with(['user', 'orderItems', 'trip', 'kyc']);
+
+        if ($request->boolean('physical_only', true)) {
+            $query->where('metadata->simType', Esim::SIM_TYPE_PHYSICAL);
+        }
+
+        if ($request->boolean('paid_only', true)) {
+            $query->where(function (Builder $q) {
+                $q->where('payment_status', 'paid')
+                    ->orWhere('status', 'paid');
+            });
+        }
+
+        return $query;
+    }
+
+    /**
+     * @return Collection<int, Order>
+     */
+    private function fetchSuffixOrderCandidates(
+        Request $request,
+        string $suffix,
+        string $suffixDigits,
+        int $limit,
+    ): Collection {
+        $escaped = $this->escapeLike($suffix);
+        $query = $this->baseOrderQuery($request)
+            ->where(function (Builder $q) use ($escaped, $suffixDigits) {
+                $q->where('draft_id', 'like', '%'.$escaped);
+
+                if ($suffixDigits !== '' && $suffixDigits !== $escaped) {
+                    $q->orWhere('draft_id', 'like', '%'.$this->escapeLike($suffixDigits));
+                }
+            })
+            ->orderByDesc('id')
+            ->limit($limit * 5);
+
+        $orders = $query->get()->filter(
+            fn (Order $order) => $this->orderMatchesSuffix($order, $suffix, $suffixDigits)
+        );
+
+        if ($request->boolean('unassigned_only', true)) {
+            $orders = $orders->filter(
+                fn (Order $order) => $this->simAssignment->findAssignmentForOrder($order) === null
+            );
+        }
+
+        return $orders->take($limit)->values();
+    }
+
+    private function orderMatchesSuffix(Order $order, string $suffix, string $suffixDigits): bool
+    {
+        $draftId = (string) $order->draft_id;
+
+        if ($suffix !== '' && str_ends_with($draftId, $suffix)) {
+            return true;
+        }
+
+        if ($suffixDigits === '') {
+            return false;
+        }
+
+        $orderDigits = preg_replace('/\D+/', '', $draftId) ?? '';
+
+        return $orderDigits !== '' && str_ends_with($orderDigits, $suffixDigits);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatOrderSuggestion(Order $order, int $suffixLen): array
+    {
+        $order->loadMissing(['user', 'orderItems', 'trip', 'kyc']);
+        $meta = is_array($order->metadata) ? $order->metadata : [];
+        $isPaid = $this->simAssignment->orderIsPaid($order);
+        $assignment = $this->simAssignment->findAssignmentForOrder($order);
+        $primaryItem = $order->orderItems->first();
+        $draftId = (string) $order->draft_id;
+        $displaySuffix = substr($draftId, -max($suffixLen, self::MIN_ORDER_SUFFIX_LENGTH));
+
+        return [
+            'order_id' => $order->id,
+            'draft_id' => $order->draft_id,
+            'order_number' => $order->draft_id,
+            'draft_id_suffix' => $displaySuffix,
+            'label' => '…'.$displaySuffix,
+            'value' => $order->draft_id,
+            'status' => $order->status,
+            'payment_status' => $order->payment_status,
+            'is_paid' => $isPaid,
+            'sim_type' => $meta['simType'] ?? null,
+            'has_sim_assignment' => $assignment !== null,
+            'total_amount' => $order->total_amount,
+            'currency' => $order->currency,
+            'paid_at' => $order->paid_at,
+            'user' => $order->user?->only(['id', 'name', 'email', 'role']),
+            'bundle' => $primaryItem ? $this->bundlePayload($primaryItem) : null,
+            'order_items' => $order->orderItems
+                ->map(fn (OrderItem $item) => $this->bundlePayload($item))
+                ->values()
+                ->all(),
+            'trip' => $order->trip?->only([
+                'destination_country',
+                'arrival_date',
+                'departure_date',
+                'duration_days',
+            ]),
+            'kyc' => $order->kyc ? $order->kyc->only([
+                'passport_id',
+                'passport_country',
+                'nationality',
+                'gender',
+                'reason',
+                'arrival_date',
+                'departure_date',
+            ]) : null,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function bundlePayload(OrderItem $item): array
+    {
+        return $item->only([
+            'id',
+            'bundle_id',
+            'bundle_name',
+            'data_amount',
+            'validity_days',
+            'price',
+            'currency',
+        ]);
+    }
+
+    private function escapeLike(string $value): string
+    {
+        return str_replace(['\\', '%', '_'], ['\\\\', '\%', '\_'], $value);
     }
 }

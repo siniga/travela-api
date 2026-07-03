@@ -94,6 +94,17 @@ class StoreOrderRequest extends FormRequest
                 return;
             }
 
+            if ($simType === Esim::SIM_TYPE_PHYSICAL) {
+                foreach (['msisdn', 'esim_id', 'user_esim_id'] as $field) {
+                    if ($this->filled($field)) {
+                        $validator->errors()->add(
+                            $field,
+                            'Physical SIM orders cannot include a SIM assignment at checkout. An agent assigns the card at the counter after payment.',
+                        );
+                    }
+                }
+            }
+
             if ($this->filled('esim_id')) {
                 $esim = Esim::find($this->input('esim_id'));
                 if ($esim && $esim->sim_type !== $simType) {

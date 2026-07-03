@@ -96,7 +96,7 @@ Route::prefix('me')->middleware('auth:sanctum')->group(function () {
 
 // Agent app routes (use agent token — not /api/admin/*)
 Route::prefix('agent')->middleware(['auth:sanctum', 'agent'])->group(function () {
-  Route::get('/orders/search', [OrderController::class, 'searchByOrderNumber']);
+  Route::get('/orders/search', [AgentOrderLookupController::class, 'searchByOrderSuffix']);
   Route::get('/orders/by-msisdn', [AgentOrderLookupController::class, 'byMsisdn']);
   Route::get('/esims/search', [EsimLookupController::class, 'searchByIccidSuffix']);
   Route::post('/orders/assign-sim', [PhysicalSimIssuanceController::class, 'assignPhysicalByOrder']);
