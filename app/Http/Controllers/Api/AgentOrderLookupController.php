@@ -96,6 +96,33 @@ class AgentOrderLookupController extends Controller
     }
 
     /**
+     * List paid physical-SIM orders that do not yet have a SIM/number assigned.
+     *
+     * Query: paid_only (default true), limit (default 50, max 100), page (default 1).
+     */
+    public function unassignedPhysicalOrders(Request $request): JsonResponse
+    {
+        $limit = min(max((int) $request->query('limit', 50), 1), 100);
+        $page = max((int) $request->query('page', 1), 1);
+
+        $orders = $this->fetchUnassignedPhysicalOrders($request);
+
+        $total = $orders->count();
+        $pageOrders = $orders->forPage($page, $limit)->values();
+
+        return response()->json([
+            'success' => true,
+            'count' => $pageOrders->count(),
+            'total' => $total,
+            'page' => $page,
+            'limit' => $limit,
+            'orders' => $pageOrders
+                ->map(fn (Order $order) => $this->formatOrderSuggestion($order, self::MIN_ORDER_SUFFIX_LENGTH))
+                ->values(),
+        ]);
+    }
+
+    /**
      * Resolve a customer order from the SIM msisdn (or iccid) shown in /agent/esims/search.
      * Used at the counter to confirm payment before assigning a physical SIM.
      */
@@ -280,6 +307,29 @@ class AgentOrderLookupController extends Controller
         }
 
         return $query;
+    }
+
+    /**
+     * @return Collection<int, Order>
+     */
+    private function fetchUnassignedPhysicalOrders(Request $request): Collection
+    {
+        $assignedOrderIds = UserEsim::query()
+            ->whereNotNull('order_id')
+            ->pluck('order_id');
+
+        $query = $this->baseOrderQuery($request)
+            ->where('metadata->simType', Esim::SIM_TYPE_PHYSICAL);
+
+        if ($assignedOrderIds->isNotEmpty()) {
+            $query->whereNotIn('id', $assignedOrderIds);
+        }
+
+        return $query
+            ->orderByDesc('id')
+            ->get()
+            ->filter(fn (Order $order) => $this->simAssignment->findAssignmentForOrder($order) === null)
+            ->values();
     }
 
     /**

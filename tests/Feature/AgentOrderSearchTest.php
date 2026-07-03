@@ -136,6 +136,59 @@ class AgentOrderSearchTest extends TestCase
             ->assertJsonValidationErrors(['msisdn']);
     }
 
+    public function test_agent_can_list_unassigned_physical_orders_with_users(): void
+    {
+        $agent = User::factory()->create(['role' => 'agent']);
+        Sanctum::actingAs($agent);
+
+        $customer = User::factory()->create([
+            'name' => 'Pending Customer',
+            'email' => 'pending@example.com',
+        ]);
+
+        $this->createPhysicalPaidOrder($customer, 'DRAFT-2026-010');
+
+        $assignedCustomer = User::factory()->create();
+        $assignedOrder = $this->createPhysicalPaidOrder($assignedCustomer, 'DRAFT-2026-011');
+        $esim = Esim::create([
+            'msisdn' => '255798091388',
+            'iccid' => '8925504500855150388',
+            'sim_type' => Esim::SIM_TYPE_PHYSICAL,
+            'status' => 'MANAGED',
+            'provider_status' => Esim::PROVIDER_STATUS_ACTIVE,
+        ]);
+        UserEsim::create([
+            'user_id' => $assignedCustomer->id,
+            'esim_id' => $esim->id,
+            'order_id' => $assignedOrder->id,
+        ]);
+
+        Order::create([
+            'draft_id' => 'DRAFT-2026-012',
+            'user_id' => $customer->id,
+            'status' => 'paid',
+            'payment_status' => 'paid',
+            'subtotal' => 25,
+            'discount_amount' => 0,
+            'total_amount' => 25,
+            'currency' => 'USD',
+            'paid_at' => now(),
+            'metadata' => ['simType' => Esim::SIM_TYPE_ESIM],
+        ]);
+
+        $response = $this->getJson('/api/agent/orders/unassigned-physical');
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('orders.0.draft_id', 'DRAFT-2026-010')
+            ->assertJsonPath('orders.0.has_sim_assignment', false)
+            ->assertJsonPath('orders.0.customer_name', 'Pending Customer')
+            ->assertJsonPath('orders.0.customer_email', 'pending@example.com')
+            ->assertJsonPath('orders.0.user.name', 'Pending Customer')
+            ->assertJsonPath('orders.0.user.email', 'pending@example.com');
+    }
+
     public function test_physical_order_checkout_does_not_assign_sim(): void
     {
         $customer = User::factory()->create();
