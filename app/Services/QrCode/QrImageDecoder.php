@@ -57,15 +57,12 @@ class QrImageDecoder
 
     public function guessImageExtension(string $binary): string
     {
-        if (str_starts_with($binary, "\x89PNG")) {
-            return 'png';
-        }
+        return (new QrImageValidator())->extension($binary) ?? 'png';
+    }
 
-        if (str_starts_with($binary, "\xFF\xD8\xFF")) {
-            return 'jpg';
-        }
-
-        return 'png';
+    public function isValidImage(string $binary): bool
+    {
+        return (new QrImageValidator())->isValid($binary);
     }
 
     private function decodeOnce(string $binary, string $extension): ?string

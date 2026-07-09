@@ -11,6 +11,7 @@ class PdfQrExtractor
     public function __construct(
         private readonly QrImageDecoder $decoder,
         private readonly PdfPageRasterizer $rasterizer,
+        private readonly QrImageValidator $validator,
     ) {
     }
 
@@ -19,50 +20,75 @@ class PdfQrExtractor
      */
     public function extract(Page $page, string $pdfPath): array
     {
-        $images = $this->extractImagesFromPage($page);
-
-        foreach ($this->sortImagesByDecodePriority($images) as $image) {
-            $decoded = $this->decoder->decode($image['binary']);
-            if ($decoded !== null) {
-                return [
-                    'data' => $decoded,
-                    'binary' => $image['binary'],
-                    'extension' => $image['extension'],
-                ];
+        foreach ($this->extractImagesFromPage($page) as $image) {
+            $result = $this->tryDecodeImage($image['binary']);
+            if ($result !== null) {
+                return $result;
             }
         }
 
-        $largest = $images[0] ?? null;
         $rasterized = $this->rasterizer->rasterizeFirstPage($pdfPath);
         if ($rasterized !== null) {
-            $decoded = $this->decodeRasterizedPage($rasterized['binary']);
-            if ($decoded !== null) {
-                return [
-                    'data' => $decoded['text'],
-                    'binary' => $decoded['binary'],
-                    'extension' => $rasterized['extension'],
-                ];
-            }
-
-            if ($largest === null || strlen($rasterized['binary']) > strlen($largest['binary'])) {
-                $largest = $rasterized;
+            $result = $this->tryDecodeRasterizedPage($rasterized['binary']);
+            if ($result !== null) {
+                return $result;
             }
         }
 
-        if ($largest !== null) {
-            Log::debug('eSIM PDF QR image kept without decoded payload', [
-                'bytes' => strlen($largest['binary']),
-                'extension' => $largest['extension'],
-            ]);
+        Log::debug('eSIM PDF QR extraction failed: no decodable QR image found');
+
+        return ['data' => null, 'binary' => null, 'extension' => 'png'];
+    }
+
+    /**
+     * @return array{data: string, binary: string, extension: string}|null
+     */
+    private function tryDecodeImage(string $binary): ?array
+    {
+        $normalized = $this->validator->normalizeForStorage($binary);
+        if ($normalized === null) {
+            return null;
+        }
+
+        $decoded = $this->decoder->decode($normalized['binary']);
+        if ($decoded === null) {
+            return null;
+        }
+
+        return [
+            'data' => $decoded,
+            'binary' => $normalized['binary'],
+            'extension' => $normalized['extension'],
+        ];
+    }
+
+    /**
+     * @return array{data: string, binary: string, extension: string}|null
+     */
+    private function tryDecodeRasterizedPage(string $binary): ?array
+    {
+        $decoded = $this->decoder->decode($binary);
+        if ($decoded !== null) {
+            $normalized = $this->validator->normalizeForStorage($binary);
+            if ($normalized === null) {
+                return null;
+            }
 
             return [
-                'data' => null,
-                'binary' => $largest['binary'],
-                'extension' => $largest['extension'],
+                'data' => $decoded,
+                'binary' => $normalized['binary'],
+                'extension' => $normalized['extension'],
             ];
         }
 
-        return ['data' => null, 'binary' => null, 'extension' => 'png'];
+        foreach ($this->cropQuadrants($binary) as $crop) {
+            $result = $this->tryDecodeImage($crop);
+            if ($result !== null) {
+                return $result;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -83,9 +109,13 @@ class PdfQrExtractor
                     continue;
                 }
 
+                if (! $this->validator->isValid($binary)) {
+                    continue;
+                }
+
                 $images[] = [
                     'binary' => $binary,
-                    'extension' => $this->decoder->guessImageExtension($binary),
+                    'extension' => $this->validator->extension($binary) ?? 'png',
                 ];
             }
         } catch (\Throwable $e) {
@@ -106,26 +136,6 @@ class PdfQrExtractor
         usort($images, fn (array $a, array $b) => strlen($b['binary']) <=> strlen($a['binary']));
 
         return $images;
-    }
-
-    /**
-     * @return array{text: string, binary: string}|null
-     */
-    private function decodeRasterizedPage(string $binary): ?array
-    {
-        $decoded = $this->decoder->decode($binary);
-        if ($decoded !== null) {
-            return ['text' => $decoded, 'binary' => $binary];
-        }
-
-        foreach ($this->cropQuadrants($binary) as $crop) {
-            $decoded = $this->decoder->decode($crop);
-            if ($decoded !== null) {
-                return ['text' => $decoded, 'binary' => $crop];
-            }
-        }
-
-        return null;
     }
 
     /**
@@ -177,7 +187,7 @@ class PdfQrExtractor
             $png = ob_get_clean() ?: '';
             imagedestroy($crop);
 
-            if ($png !== '') {
+            if ($png !== '' && $this->validator->isValid($png)) {
                 $crops[] = $png;
             }
         }

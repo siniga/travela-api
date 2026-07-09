@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Esim;
+use App\Services\QrCode\QrImageValidator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -67,9 +68,22 @@ class EsimController extends Controller
         }
 
         $path = $located['path'];
-        $mime = str_ends_with(strtolower($path), '.png')
-            ? 'image/png'
-            : 'image/jpeg';
+        $binary = Storage::disk($located['disk'])->get($path);
+        if (! is_string($binary) || $binary === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'QR code image not available for this eSIM.',
+            ], 404);
+        }
+
+        $validator = new QrImageValidator();
+        $mime = $validator->mimeType($binary);
+        if ($mime === null) {
+            return response()->json([
+                'success' => false,
+                'message' => 'QR code image file is corrupt or unreadable. Please re-import this eSIM.',
+            ], 404);
+        }
 
         return Storage::disk($located['disk'])->response(
             $path,

@@ -5,6 +5,7 @@ namespace Tests\Unit;
 use App\Services\QrCode\PdfPageRasterizer;
 use App\Services\QrCode\PdfQrExtractor;
 use App\Services\QrCode\QrImageDecoder;
+use App\Services\QrCode\QrImageValidator;
 use ReflectionClass;
 use Tests\TestCase;
 
@@ -12,7 +13,7 @@ class PdfQrExtractorTest extends TestCase
 {
     public function test_sort_images_by_decode_priority_prefers_larger_payloads(): void
     {
-        $extractor = new PdfQrExtractor(new QrImageDecoder(), new PdfPageRasterizer());
+        $extractor = new PdfQrExtractor(new QrImageDecoder(), new PdfPageRasterizer(), new QrImageValidator());
         $ref = new ReflectionClass($extractor);
         $method = $ref->getMethod('sortImagesByDecodePriority');
         $method->setAccessible(true);

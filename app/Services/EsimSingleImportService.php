@@ -12,6 +12,7 @@ use Smalot\PdfParser\Parser;
 use App\Services\QrCode\PdfPageRasterizer;
 use App\Services\QrCode\PdfQrExtractor;
 use App\Services\QrCode\QrImageDecoder;
+use App\Services\QrCode\QrImageValidator;
 use Illuminate\Http\UploadedFile;
 
 class EsimSingleImportService
@@ -22,14 +23,21 @@ class EsimSingleImportService
 
     private readonly QrImageDecoder $qrDecoder;
 
+    private readonly QrImageValidator $qrImageValidator;
+
     private readonly PdfQrExtractor $pdfQrExtractor;
 
-    public function __construct(?QrImageDecoder $qrDecoder = null, ?PdfQrExtractor $pdfQrExtractor = null)
-    {
+    public function __construct(
+        ?QrImageDecoder $qrDecoder = null,
+        ?QrImageValidator $qrImageValidator = null,
+        ?PdfQrExtractor $pdfQrExtractor = null,
+    ) {
         $this->qrDecoder = $qrDecoder ?? new QrImageDecoder();
+        $this->qrImageValidator = $qrImageValidator ?? new QrImageValidator();
         $this->pdfQrExtractor = $pdfQrExtractor ?? new PdfQrExtractor(
             $this->qrDecoder,
             new PdfPageRasterizer(),
+            $this->qrImageValidator,
         );
     }
 
@@ -54,7 +62,6 @@ class EsimSingleImportService
 
         $text = '';
         $qrBinary = null;
-        $qrExtension = 'png';
         $qrCodeData = null;
 
         if ($isPdf) {
@@ -62,11 +69,9 @@ class EsimSingleImportService
             $text = trim($page->getText());
             $qrPayload = $this->pdfQrExtractor->extract($page, $file->getRealPath());
             $qrBinary = $qrPayload['binary'];
-            $qrExtension = $qrPayload['extension'];
             $qrCodeData = $qrPayload['data'];
         } else {
             $qrBinary = file_get_contents($file->getRealPath()) ?: null;
-            $qrExtension = in_array($extension, ['jpg', 'jpeg'], true) ? 'jpg' : 'png';
         }
 
         $phoneNumber = $phoneOverride
@@ -94,8 +99,17 @@ class EsimSingleImportService
 
         $qrPath = null;
         if ($qrBinary) {
-            $qrPath = $this->storeQrImage($phoneNumber, $qrBinary, $qrExtension);
-            $item->update(['qr_code_path' => $qrPath]);
+            $normalized = $this->qrImageValidator->normalizeForStorage($qrBinary);
+            $shouldStore = $normalized !== null && (! $isPdf || $qrCodeData !== null);
+
+            if ($shouldStore) {
+                $qrPath = $this->storeQrImage(
+                    $phoneNumber,
+                    $normalized['binary'],
+                    $normalized['extension'],
+                );
+                $item->update(['qr_code_path' => $qrPath]);
+            }
         }
 
         $existing = Esim::query()->where('msisdn', $phoneNumber)->first();
