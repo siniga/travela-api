@@ -11,6 +11,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 
 class EsimImportBatchController extends Controller
 {
@@ -24,10 +25,16 @@ class EsimImportBatchController extends Controller
         $validated = $request->validate([
             'name' => ['nullable', 'string', 'max:255'],
             'total_items' => ['required', 'integer', 'min:1', 'max:10000'],
+            'sim_type' => [
+                'required',
+                'string',
+                Rule::in([EsimImportBatch::SIM_TYPE_ESIM, EsimImportBatch::SIM_TYPE_PHYSICAL]),
+            ],
         ]);
 
         $batch = EsimImportBatch::query()->create([
             'name' => $validated['name'] ?? null,
+            'sim_type' => $validated['sim_type'],
             'total_items' => $validated['total_items'],
             'created_by' => $request->user()?->id,
             'status' => EsimImportBatch::STATUS_PENDING,

@@ -61,6 +61,7 @@ class Esim extends Model
             'id' => $this->id,
             'phone_number' => $this->msisdn,
             'iccid' => $this->iccid,
+            'sim_type' => $this->sim_type,
             'status' => $this->sale_status ?? self::SALE_STATUS_AVAILABLE,
             'import_batch_id' => $this->import_batch_id,
             'has_qr_code' => (bool) $this->qr_code_path,

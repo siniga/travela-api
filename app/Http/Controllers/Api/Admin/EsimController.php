@@ -58,25 +58,88 @@ class EsimController extends Controller
             ], 404);
         }
 
-        if (! $esim->qr_code_path || ! Storage::disk('local')->exists($esim->qr_code_path)) {
+        $located = $this->locateQrImage($esim->qr_code_path);
+        if ($located === null) {
             return response()->json([
                 'success' => false,
                 'message' => 'QR code image not available for this eSIM.',
             ], 404);
         }
 
-        $mime = str_ends_with(strtolower($esim->qr_code_path), '.png')
+        $path = $located['path'];
+        $mime = str_ends_with(strtolower($path), '.png')
             ? 'image/png'
             : 'image/jpeg';
 
-        return Storage::disk('local')->response(
-            $esim->qr_code_path,
-            'esim-'.$esim->id.'-qr.'.pathinfo($esim->qr_code_path, PATHINFO_EXTENSION),
+        return Storage::disk($located['disk'])->response(
+            $path,
+            'esim-'.$esim->id.'-qr.'.pathinfo($path, PATHINFO_EXTENSION),
             [
                 'Content-Type' => $mime,
                 'Cache-Control' => 'private, no-store, no-cache, must-revalidate',
             ],
         );
+    }
+
+    /**
+     * Resolve stored QR image path across current and legacy storage locations.
+     *
+     * @return array{disk: string, path: string}|null
+     */
+    private function locateQrImage(?string $qrCodePath): ?array
+    {
+        $path = $this->normalizeQrCodePath($qrCodePath);
+        if ($path === null) {
+            return null;
+        }
+
+        if (Storage::disk('local')->exists($path)) {
+            return ['disk' => 'local', 'path' => $path];
+        }
+
+        // Laravel 10 and earlier stored "local" files directly under storage/app/.
+        $legacyFullPath = storage_path('app/'.$path);
+        if (is_file($legacyFullPath)) {
+            Storage::disk('local')->put($path, file_get_contents($legacyFullPath) ?: '');
+            @unlink($legacyFullPath);
+
+            return ['disk' => 'local', 'path' => $path];
+        }
+
+        if (Storage::disk('public')->exists($path)) {
+            return ['disk' => 'public', 'path' => $path];
+        }
+
+        return null;
+    }
+
+    private function normalizeQrCodePath(?string $qrCodePath): ?string
+    {
+        if ($qrCodePath === null || trim($qrCodePath) === '') {
+            return null;
+        }
+
+        $path = str_replace('\\', '/', trim($qrCodePath));
+
+        if (preg_match('#^https?://#i', $path) === 1) {
+            $path = (string) parse_url($path, PHP_URL_PATH);
+        }
+
+        if (preg_match('#storage/app/(?:private/)?(.+)$#', $path, $matches) === 1) {
+            $path = $matches[1];
+        } elseif (preg_match('#(?:^|/)storage/(esims/qr-codes/.+)$#', $path, $matches) === 1) {
+            $path = $matches[1];
+        }
+
+        if (str_starts_with($path, 'private/')) {
+            $path = substr($path, strlen('private/'));
+        }
+
+        if (preg_match('#(esims/qr-codes/[^/]+)$#', $path, $matches) === 1) {
+            $path = $matches[1];
+        }
+
+        return $path;
     }
 
     /**

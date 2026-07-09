@@ -8,6 +8,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class EsimImportBatch extends Model
 {
+    public const SIM_TYPE_ESIM = 'esim';
+
+    public const SIM_TYPE_PHYSICAL = 'physical';
+
     public const STATUS_PENDING = 'pending';
 
     public const STATUS_PROCESSING = 'processing';
@@ -20,6 +24,7 @@ class EsimImportBatch extends Model
 
     protected $fillable = [
         'name',
+        'sim_type',
         'total_items',
         'processed_items',
         'failed_items',
@@ -86,6 +91,18 @@ class EsimImportBatch extends Model
         }
     }
 
+    public function isPhysical(): bool
+    {
+        return $this->sim_type === self::SIM_TYPE_PHYSICAL;
+    }
+
+    public function resolvedSimType(): string
+    {
+        return in_array($this->sim_type, [self::SIM_TYPE_ESIM, self::SIM_TYPE_PHYSICAL], true)
+            ? $this->sim_type
+            : self::SIM_TYPE_ESIM;
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -94,6 +111,7 @@ class EsimImportBatch extends Model
         return [
             'id' => $this->id,
             'name' => $this->name,
+            'sim_type' => $this->resolvedSimType(),
             'total_items' => $this->total_items,
             'processed_items' => $this->processed_items,
             'failed_items' => $this->failed_items,

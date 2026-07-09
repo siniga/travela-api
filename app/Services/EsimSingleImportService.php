@@ -5,20 +5,33 @@ namespace App\Services;
 use App\Models\Esim;
 use App\Models\EsimImportBatch;
 use App\Models\EsimImportItem;
-use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Smalot\PdfParser\Page;
 use Smalot\PdfParser\Parser;
-use Smalot\PdfParser\XObject\Image;
-use Zxing\QrReader;
+use App\Services\QrCode\PdfPageRasterizer;
+use App\Services\QrCode\PdfQrExtractor;
+use App\Services\QrCode\QrImageDecoder;
+use Illuminate\Http\UploadedFile;
 
 class EsimSingleImportService
 {
     private const QR_STORAGE_DIR = 'esims/qr-codes';
 
     private const SOURCE_STORAGE_DIR = 'esims/import-sources';
+
+    private readonly QrImageDecoder $qrDecoder;
+
+    private readonly PdfQrExtractor $pdfQrExtractor;
+
+    public function __construct(?QrImageDecoder $qrDecoder = null, ?PdfQrExtractor $pdfQrExtractor = null)
+    {
+        $this->qrDecoder = $qrDecoder ?? new QrImageDecoder();
+        $this->pdfQrExtractor = $pdfQrExtractor ?? new PdfQrExtractor(
+            $this->qrDecoder,
+            new PdfPageRasterizer(),
+        );
+    }
 
     /**
      * Process one uploaded file for a batch import item.
@@ -42,13 +55,15 @@ class EsimSingleImportService
         $text = '';
         $qrBinary = null;
         $qrExtension = 'png';
+        $qrCodeData = null;
 
         if ($isPdf) {
             $page = $this->loadSinglePdfPage($file);
             $text = trim($page->getText());
-            $qrPayload = $this->extractQrFromPdfPage($page);
+            $qrPayload = $this->pdfQrExtractor->extract($page, $file->getRealPath());
             $qrBinary = $qrPayload['binary'];
             $qrExtension = $qrPayload['extension'];
+            $qrCodeData = $qrPayload['data'];
         } else {
             $qrBinary = file_get_contents($file->getRealPath()) ?: null;
             $qrExtension = in_array($extension, ['jpg', 'jpeg'], true) ? 'jpg' : 'png';
@@ -58,13 +73,15 @@ class EsimSingleImportService
             ? Esim::normalizeMsisdn($phoneOverride)
             : $this->extractPhoneNumber($text);
 
-        $qrCodeData = null;
-        if ($qrBinary) {
-            $qrCodeData = $this->decodeQrFromBinary($qrBinary);
-            if (! $phoneNumber && $qrCodeData) {
+        if ($qrBinary && $qrCodeData === null) {
+            $qrCodeData = $this->qrDecoder->decode($qrBinary);
+        }
+
+        if ($qrCodeData) {
+            if (! $phoneNumber) {
                 $phoneNumber = $this->extractPhoneNumber($qrCodeData) ?? $this->extractPhoneFromQrData($qrCodeData);
             }
-            if (! $iccidOverride && $qrCodeData) {
+            if (! $iccidOverride) {
                 $iccidOverride = $this->extractIccid($qrCodeData) ?? $iccidOverride;
             }
         }
@@ -83,14 +100,19 @@ class EsimSingleImportService
 
         $existing = Esim::query()->where('msisdn', $phoneNumber)->first();
 
+        $batchSimType = $batch->resolvedSimType();
+        $importDescription = $batchSimType === Esim::SIM_TYPE_PHYSICAL
+            ? 'Imported physical card via batch #'.$batch->id
+            : 'Imported eSIM via batch #'.$batch->id;
+
         $attributes = array_filter([
             'import_batch_id' => $batch->id,
             'iccid' => $iccid,
             'qr_code_path' => $qrPath,
             'qr_code_data' => $qrCodeData,
-            'sim_type' => Esim::SIM_TYPE_ESIM,
+            'sim_type' => $batchSimType,
             'provider_status' => Esim::PROVIDER_STATUS_ACTIVE,
-            'description' => 'Imported via batch #'.$batch->id,
+            'description' => $importDescription,
         ], fn ($value) => $value !== null && $value !== '');
 
         if (! $existing) {
@@ -226,80 +248,6 @@ class EsimSingleImportService
         return $pages[0];
     }
 
-    /**
-     * @return array{data: ?string, binary: ?string, extension: string}
-     */
-    private function extractQrFromPdfPage(Page $page): array
-    {
-        foreach ($this->extractImagesFromPage($page) as $image) {
-            $decoded = $this->decodeQrFromBinary($image['binary']);
-            if ($decoded !== null) {
-                return [
-                    'data' => $decoded,
-                    'binary' => $image['binary'],
-                    'extension' => $image['extension'],
-                ];
-            }
-        }
-
-        return ['data' => null, 'binary' => null, 'extension' => 'png'];
-    }
-
-    /**
-     * @return list<array{binary: string, extension: string}>
-     */
-    private function extractImagesFromPage(Page $page): array
-    {
-        $images = [];
-
-        try {
-            foreach ($page->getXObjects() as $xObject) {
-                if (! $xObject instanceof Image) {
-                    continue;
-                }
-
-                $binary = $xObject->getContent();
-                if (! is_string($binary) || $binary === '') {
-                    continue;
-                }
-
-                $images[] = [
-                    'binary' => $binary,
-                    'extension' => $this->guessImageExtension($binary),
-                ];
-            }
-        } catch (\Throwable $e) {
-            Log::debug('eSIM single import: XObject extraction failed', ['error' => $e->getMessage()]);
-        }
-
-        return $images;
-    }
-
-    private function decodeQrFromBinary(string $binary): ?string
-    {
-        try {
-            $reader = new QrReader($binary, QrReader::SOURCE_TYPE_BLOB);
-            $text = $reader->text();
-
-            return is_string($text) && trim($text) !== '' ? trim($text) : null;
-        } catch (\Throwable) {
-            $tempPath = storage_path('app/private/esims/tmp/'.Str::uuid().'.png');
-            @mkdir(dirname($tempPath), 0755, true);
-
-            try {
-                file_put_contents($tempPath, $binary);
-                $reader = new QrReader($tempPath, QrReader::SOURCE_TYPE_FILE);
-                $text = $reader->text();
-
-                return is_string($text) && trim($text) !== '' ? trim($text) : null;
-            } catch (\Throwable) {
-                return null;
-            } finally {
-                @unlink($tempPath);
-            }
-        }
-    }
-
     private function storeSourceFile(int $batchId, int $itemId, UploadedFile $file): string
     {
         $extension = strtolower($file->getClientOriginalExtension() ?: 'bin');
@@ -319,18 +267,5 @@ class EsimSingleImportService
         Storage::disk('local')->put($path, $binary);
 
         return $path;
-    }
-
-    private function guessImageExtension(string $binary): string
-    {
-        if (str_starts_with($binary, "\x89PNG")) {
-            return 'png';
-        }
-
-        if (str_starts_with($binary, "\xFF\xD8\xFF")) {
-            return 'jpg';
-        }
-
-        return 'png';
     }
 }
