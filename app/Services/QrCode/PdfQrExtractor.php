@@ -12,6 +12,8 @@ class PdfQrExtractor
         private readonly QrImageDecoder $decoder,
         private readonly PdfPageRasterizer $rasterizer,
         private readonly QrImageValidator $validator,
+        private readonly QrImageCoercer $coercer,
+        private readonly QrRegionScanner $regionScanner,
     ) {
     }
 
@@ -20,22 +22,36 @@ class PdfQrExtractor
      */
     public function extract(Page $page, string $pdfPath): array
     {
+        $fallbackBinary = null;
+
         foreach ($this->extractImagesFromPage($page) as $image) {
-            $result = $this->tryDecodeImage($image['binary']);
+            $fallbackBinary = $this->pickBetterImageCandidate($fallbackBinary, $image['binary']);
+            $result = $this->tryDecodeCandidates($image['binary']);
             if ($result !== null) {
                 return $result;
             }
         }
 
-        $rasterized = $this->rasterizer->rasterizeFirstPage($pdfPath);
-        if ($rasterized !== null) {
+        foreach ($this->rasterizer->rasterizeFirstPageVariants($pdfPath) as $rasterized) {
+            $fallbackBinary = $this->pickBetterImageCandidate($fallbackBinary, $rasterized['binary']);
             $result = $this->tryDecodeRasterizedPage($rasterized['binary']);
             if ($result !== null) {
                 return $result;
             }
         }
 
-        Log::debug('eSIM PDF QR extraction failed: no decodable QR image found');
+        Log::debug('eSIM PDF QR extraction failed: no decodable QR image found', [
+            'pdf' => basename($pdfPath),
+        ]);
+
+        $fallback = $this->normalizeImageCandidate($fallbackBinary);
+        if ($fallback !== null) {
+            return [
+                'data' => null,
+                'binary' => $fallback['binary'],
+                'extension' => $fallback['extension'],
+            ];
+        }
 
         return ['data' => null, 'binary' => null, 'extension' => 'png'];
     }
@@ -43,35 +59,17 @@ class PdfQrExtractor
     /**
      * @return array{data: string, binary: string, extension: string}|null
      */
-    private function tryDecodeImage(string $binary): ?array
+    private function tryDecodeCandidates(string $binary): ?array
     {
-        $normalized = $this->validator->normalizeForStorage($binary);
-        if ($normalized === null) {
-            return null;
-        }
+        foreach ($this->coercer->candidates($binary) as $candidate) {
+            $decoded = $this->decoder->decode($candidate['binary']);
+            if ($decoded === null) {
+                continue;
+            }
 
-        $decoded = $this->decoder->decode($normalized['binary']);
-        if ($decoded === null) {
-            return null;
-        }
-
-        return [
-            'data' => $decoded,
-            'binary' => $normalized['binary'],
-            'extension' => $normalized['extension'],
-        ];
-    }
-
-    /**
-     * @return array{data: string, binary: string, extension: string}|null
-     */
-    private function tryDecodeRasterizedPage(string $binary): ?array
-    {
-        $decoded = $this->decoder->decode($binary);
-        if ($decoded !== null) {
-            $normalized = $this->validator->normalizeForStorage($binary);
+            $normalized = $this->validator->normalizeForStorage($candidate['binary']);
             if ($normalized === null) {
-                return null;
+                continue;
             }
 
             return [
@@ -81,8 +79,21 @@ class PdfQrExtractor
             ];
         }
 
-        foreach ($this->cropQuadrants($binary) as $crop) {
-            $result = $this->tryDecodeImage($crop);
+        return null;
+    }
+
+    /**
+     * @return array{data: string, binary: string, extension: string}|null
+     */
+    private function tryDecodeRasterizedPage(string $binary): ?array
+    {
+        $result = $this->tryDecodeCandidates($binary);
+        if ($result !== null) {
+            return $result;
+        }
+
+        foreach ($this->regionScanner->scanRegions($binary) as $region) {
+            $result = $this->tryDecodeCandidates($region);
             if ($result !== null) {
                 return $result;
             }
@@ -109,91 +120,71 @@ class PdfQrExtractor
                     continue;
                 }
 
-                if (! $this->validator->isValid($binary)) {
-                    continue;
-                }
-
                 $images[] = [
                     'binary' => $binary,
                     'extension' => $this->validator->extension($binary) ?? 'png',
+                    'valid' => $this->validator->isValid($binary),
                 ];
             }
         } catch (\Throwable $e) {
             Log::debug('eSIM single import: XObject extraction failed', ['error' => $e->getMessage()]);
         }
 
-        return $this->sortImagesByDecodePriority($images);
+        usort($images, function (array $a, array $b): int {
+            if ($a['valid'] !== $b['valid']) {
+                return $a['valid'] ? -1 : 1;
+            }
+
+            return strlen($b['binary']) <=> strlen($a['binary']);
+        });
+
+        return array_map(
+            fn (array $image): array => [
+                'binary' => $image['binary'],
+                'extension' => $image['extension'],
+            ],
+            $images,
+        );
+    }
+
+    private function pickBetterImageCandidate(?string $current, string $candidate): ?string
+    {
+        $normalized = $this->normalizeImageCandidate($candidate);
+        if ($normalized === null) {
+            return $current;
+        }
+
+        if ($current === null) {
+            return $normalized['binary'];
+        }
+
+        $currentNormalized = $this->normalizeImageCandidate($current);
+        if ($currentNormalized === null) {
+            return $normalized['binary'];
+        }
+
+        return strlen($normalized['binary']) > strlen($currentNormalized['binary'])
+            ? $normalized['binary']
+            : $current;
     }
 
     /**
-     * Larger embedded images are more likely to contain the QR code.
-     *
-     * @param  list<array{binary: string, extension: string}>  $images
-     * @return list<array{binary: string, extension: string}>
+     * @return array{binary: string, extension: string}|null
      */
-    private function sortImagesByDecodePriority(array $images): array
+    private function normalizeImageCandidate(?string $binary): ?array
     {
-        usort($images, fn (array $a, array $b) => strlen($b['binary']) <=> strlen($a['binary']));
-
-        return $images;
-    }
-
-    /**
-     * @return list<string>
-     */
-    private function cropQuadrants(string $binary): array
-    {
-        if (! extension_loaded('gd')) {
-            return [];
+        if ($binary === null || $binary === '') {
+            return null;
         }
 
-        $image = @imagecreatefromstring($binary);
-        if ($image === false) {
-            return [];
+        $normalized = $this->validator->normalizeForStorage($binary);
+        if ($normalized === null) {
+            return null;
         }
 
-        $width = imagesx($image);
-        $height = imagesy($image);
-        if ($width < 2 || $height < 2) {
-            imagedestroy($image);
-
-            return [];
-        }
-
-        $crops = [];
-        $halfWidth = (int) floor($width / 2);
-        $halfHeight = (int) floor($height / 2);
-        $regions = [
-            [0, 0, $halfWidth, $halfHeight],
-            [$halfWidth, 0, $width - $halfWidth, $halfHeight],
-            [0, $halfHeight, $halfWidth, $height - $halfHeight],
-            [$halfWidth, $halfHeight, $width - $halfWidth, $height - $halfHeight],
+        return [
+            'binary' => $normalized['binary'],
+            'extension' => $normalized['extension'],
         ];
-
-        foreach ($regions as [$x, $y, $regionWidth, $regionHeight]) {
-            $crop = imagecrop($image, [
-                'x' => $x,
-                'y' => $y,
-                'width' => $regionWidth,
-                'height' => $regionHeight,
-            ]);
-
-            if ($crop === false) {
-                continue;
-            }
-
-            ob_start();
-            imagepng($crop);
-            $png = ob_get_clean() ?: '';
-            imagedestroy($crop);
-
-            if ($png !== '' && $this->validator->isValid($png)) {
-                $crops[] = $png;
-            }
-        }
-
-        imagedestroy($image);
-
-        return $crops;
     }
 }

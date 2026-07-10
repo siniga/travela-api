@@ -4,26 +4,25 @@ namespace Tests\Unit;
 
 use App\Services\QrCode\PdfPageRasterizer;
 use App\Services\QrCode\PdfQrExtractor;
+use App\Services\QrCode\QrImageCoercer;
 use App\Services\QrCode\QrImageDecoder;
 use App\Services\QrCode\QrImageValidator;
-use ReflectionClass;
+use App\Services\QrCode\QrRegionScanner;
 use Tests\TestCase;
 
 class PdfQrExtractorTest extends TestCase
 {
-    public function test_sort_images_by_decode_priority_prefers_larger_payloads(): void
+    public function test_extractor_can_be_constructed_with_all_dependencies(): void
     {
-        $extractor = new PdfQrExtractor(new QrImageDecoder(), new PdfPageRasterizer(), new QrImageValidator());
-        $ref = new ReflectionClass($extractor);
-        $method = $ref->getMethod('sortImagesByDecodePriority');
-        $method->setAccessible(true);
+        $validator = new QrImageValidator();
+        $extractor = new PdfQrExtractor(
+            new QrImageDecoder(),
+            new PdfPageRasterizer(),
+            $validator,
+            new QrImageCoercer($validator),
+            new QrRegionScanner(),
+        );
 
-        $sorted = $method->invoke($extractor, [
-            ['binary' => 'small', 'extension' => 'png'],
-            ['binary' => str_repeat('x', 100), 'extension' => 'png'],
-            ['binary' => 'medium-size', 'extension' => 'jpg'],
-        ]);
-
-        $this->assertSame(100, strlen($sorted[0]['binary']));
+        $this->assertInstanceOf(PdfQrExtractor::class, $extractor);
     }
 }

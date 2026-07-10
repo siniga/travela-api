@@ -11,8 +11,10 @@ use Smalot\PdfParser\Page;
 use Smalot\PdfParser\Parser;
 use App\Services\QrCode\PdfPageRasterizer;
 use App\Services\QrCode\PdfQrExtractor;
+use App\Services\QrCode\QrImageCoercer;
 use App\Services\QrCode\QrImageDecoder;
 use App\Services\QrCode\QrImageValidator;
+use App\Services\QrCode\QrRegionScanner;
 use Illuminate\Http\UploadedFile;
 
 class EsimSingleImportService
@@ -38,6 +40,8 @@ class EsimSingleImportService
             $this->qrDecoder,
             new PdfPageRasterizer(),
             $this->qrImageValidator,
+            new QrImageCoercer($this->qrImageValidator),
+            new QrRegionScanner(),
         );
     }
 
@@ -53,6 +57,9 @@ class EsimSingleImportService
         ?string $phoneOverride = null,
         ?string $iccidOverride = null,
     ): array {
+        $phoneOverride = $this->resolvePhoneOverride($phoneOverride, $item->phone_number);
+        $iccidOverride = $this->resolveIccidOverride($iccidOverride, $item->iccid);
+
         $sourcePath = $this->storeSourceFile($batch->id, $item->id, $file);
         $item->update(['source_file_path' => $sourcePath]);
 
@@ -100,9 +107,8 @@ class EsimSingleImportService
         $qrPath = null;
         if ($qrBinary) {
             $normalized = $this->qrImageValidator->normalizeForStorage($qrBinary);
-            $shouldStore = $normalized !== null && (! $isPdf || $qrCodeData !== null);
 
-            if ($shouldStore) {
+            if ($normalized !== null) {
                 $qrPath = $this->storeQrImage(
                     $phoneNumber,
                     $normalized['binary'],
@@ -244,6 +250,32 @@ class EsimSingleImportService
     {
         if (preg_match('/(?:msisdn|phone|tel)[=:]?\s*(\+?2557\d{8}|2557\d{8})/i', $qrData, $matches)) {
             return Esim::normalizeMsisdn($matches[1]);
+        }
+
+        return null;
+    }
+
+    private function resolvePhoneOverride(?string $override, ?string $itemValue): ?string
+    {
+        if (is_string($override) && trim($override) !== '') {
+            return $override;
+        }
+
+        if (is_string($itemValue) && trim($itemValue) !== '') {
+            return $itemValue;
+        }
+
+        return null;
+    }
+
+    private function resolveIccidOverride(?string $override, ?string $itemValue): ?string
+    {
+        if (is_string($override) && trim($override) !== '') {
+            return strtoupper(trim($override));
+        }
+
+        if (is_string($itemValue) && trim($itemValue) !== '') {
+            return strtoupper(trim($itemValue));
         }
 
         return null;

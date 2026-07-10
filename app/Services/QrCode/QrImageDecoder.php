@@ -129,8 +129,16 @@ class QrImageDecoder
         $grayscale = $this->toGrayscale($image, $width, $height);
         if ($grayscale !== null) {
             $variants[] = ['binary' => $grayscale, 'extension' => 'png'];
-            $variants[] = ['binary' => $this->adjustContrast($grayscale, 30), 'extension' => 'png'];
-            $variants[] = ['binary' => $this->adjustContrast($grayscale, -30), 'extension' => 'png'];
+            foreach ([-40, -20, 20, 40] as $level) {
+                $variants[] = ['binary' => $this->adjustContrast($grayscale, $level), 'extension' => 'png'];
+            }
+        }
+
+        foreach ([90, 180, 270] as $degrees) {
+            $rotated = $this->rotateImage($image, $degrees);
+            if ($rotated !== null) {
+                $variants[] = ['binary' => $rotated, 'extension' => 'png'];
+            }
         }
 
         imagedestroy($image);
@@ -146,6 +154,10 @@ class QrImageDecoder
         $longest = max($width, $height);
         $targets = [];
 
+        if ($longest < 500) {
+            $targets[] = (int) round($width * (700 / $longest));
+        }
+
         if ($longest < 600) {
             $targets[] = (int) round($width * (900 / $longest));
         }
@@ -154,8 +166,12 @@ class QrImageDecoder
             $targets[] = (int) round($width * (1200 / $longest));
         }
 
+        if ($longest < 1200) {
+            $targets[] = (int) round($width * (1600 / $longest));
+        }
+
         if ($longest > 1800) {
-            $targets[] = (int) round($width * (1200 / $longest));
+            $targets[] = (int) round($width * (1400 / $longest));
         }
 
         return array_values(array_unique(array_filter($targets, fn (int $value) => $value > 0)));
@@ -201,6 +217,16 @@ class QrImageDecoder
         imagefilter($image, IMG_FILTER_CONTRAST, $level);
 
         return $this->imageToPngBinary($image);
+    }
+
+    private function rotateImage(\GdImage $image, int $degrees): ?string
+    {
+        $rotated = imagerotate($image, $degrees, 0);
+        if ($rotated === false) {
+            return null;
+        }
+
+        return $this->imageToPngBinary($rotated);
     }
 
     private function imageToPngBinary(\GdImage $image): string
