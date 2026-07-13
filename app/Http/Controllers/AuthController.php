@@ -5,37 +5,43 @@ namespace App\Http\Controllers;
 use App\Http\Requests\RegisterRequest;
 use App\Http\Requests\LoginRequest;
 use App\Models\User;
+use App\Services\EmailVerificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Mail;
-use App\Mail\EmailVerificationCodeMail;
 
 class AuthController extends Controller
 {
+    public function __construct(
+        private readonly EmailVerificationService $emailVerification,
+    ) {
+    }
+
     public function register(RegisterRequest $req) {
         $user = User::create([
             'name' => $req->name,
             'email' => $req->email,
             'role' => 'user',
-            'password' => Hash::make($req->password),
+            'password' => $req->password,
         ]);
 
-        $code = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-
-        $user->update([
-            'email_verification_code' => Hash::make($code),
-            'email_verification_expires_at' => now()->addMinutes(15),
-        ]);
-
-        Mail::to($user->email)->send(new EmailVerificationCodeMail($code));
+        $mailResult = $this->emailVerification->issueAndSend($user);
 
         $token = $user->createToken($req->device ?? 'mobile')->plainTextToken;
 
-        return response()->json([
-            'user'  => $this->userPayload($user),
+        $response = [
+            'user'  => $this->userPayload($user->fresh()),
             'token' => $token,
             'email_verification_required' => true,
-        ], 201);
+        ];
+
+        if (! $mailResult['sent']) {
+            $response['message'] = $mailResult['message'];
+            $response['verification_email_sent'] = false;
+        } else {
+            $response['verification_email_sent'] = true;
+        }
+
+        return response()->json($response, 201);
     }
 
     public function login(LoginRequest $req) {

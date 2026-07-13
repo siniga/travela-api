@@ -32,7 +32,15 @@ class PasswordResetController extends Controller
         
         $setPasswordUrl = 'https://thetravela.com/set-password?email='.urlencode($user->email);
 
-        Mail::to($user->email)->send(new PasswordResetCodeMail($code, $setPasswordUrl));
+        try {
+            Mail::to($user->email)->send(new PasswordResetCodeMail($code, $setPasswordUrl));
+        } catch (\Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'message' => 'We could not send the reset email. Please try again shortly.',
+            ], 503);
+        }
         
         return response()->json(['message' => 'Reset code sent to your email']);
     }

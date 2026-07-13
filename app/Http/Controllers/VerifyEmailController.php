@@ -5,12 +5,16 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Auth\Events\Verified;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Mail;
 use App\Models\User;
-use App\Mail\EmailVerificationCodeMail;
+use App\Services\EmailVerificationService;
 
 class VerifyEmailController extends Controller
 {
+    public function __construct(
+        private readonly EmailVerificationService $emailVerification,
+    ) {
+    }
+
     public function verify(Request $request) {
         $request->validate([
             'email' => ['required', 'email'],
@@ -57,14 +61,11 @@ class VerifyEmailController extends Controller
             return response()->json(['message' => 'Email already verified']);
         }
 
-        $code = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        $mailResult = $this->emailVerification->issueAndSend($user);
 
-        $user->update([
-            'email_verification_code' => Hash::make($code),
-            'email_verification_expires_at' => now()->addMinutes(15),
-        ]);
-
-        Mail::to($user->email)->send(new EmailVerificationCodeMail($code));
+        if (! $mailResult['sent']) {
+            return response()->json(['message' => $mailResult['message']], 503);
+        }
 
         return response()->json(['message' => 'Verification code sent to your email']);
     }

@@ -13,10 +13,14 @@ class EmailVerificationTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Mail::fake();
+    }
+
     public function test_register_stores_verification_code_and_leaves_email_unverified(): void
     {
-        Mail::fake();
-
         $response = $this->postJson('/api/auth/register', [
             'name' => 'Test User',
             'email' => 'buyer@example.com',
@@ -26,6 +30,7 @@ class EmailVerificationTest extends TestCase
 
         $response->assertCreated()
             ->assertJsonPath('email_verification_required', true)
+            ->assertJsonPath('verification_email_sent', true)
             ->assertJsonPath('user.email_verified', false);
 
         $user = User::where('email', 'buyer@example.com')->firstOrFail();
@@ -41,8 +46,6 @@ class EmailVerificationTest extends TestCase
 
     public function test_verify_email_accepts_valid_code(): void
     {
-        Mail::fake();
-
         $this->postJson('/api/auth/register', [
             'name' => 'Test User',
             'email' => 'buyer@example.com',
@@ -73,8 +76,6 @@ class EmailVerificationTest extends TestCase
 
     public function test_resend_stores_new_code_without_auto_verifying(): void
     {
-        Mail::fake();
-
         $register = $this->postJson('/api/auth/register', [
             'name' => 'Test User',
             'email' => 'buyer@example.com',
