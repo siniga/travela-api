@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Http\Requests\RegisterRequest;
 use App\Http\Requests\LoginRequest;
 use App\Models\User;
-use Illuminate\Auth\Events\Verified;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
@@ -23,23 +22,19 @@ class AuthController extends Controller
 
         $code = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
 
-        Mail::to($user->email)->send(new EmailVerificationCodeMail($code));
-
         $user->update([
-            'email_verified_at' => now(),
-            'email_verification_code' => null,
-            'email_verification_expires_at' => null,
+            'email_verification_code' => Hash::make($code),
+            'email_verification_expires_at' => now()->addMinutes(15),
         ]);
-        $user->refresh();
 
-        event(new Verified($user));
+        Mail::to($user->email)->send(new EmailVerificationCodeMail($code));
 
         $token = $user->createToken($req->device ?? 'mobile')->plainTextToken;
 
         return response()->json([
             'user'  => $this->userPayload($user),
             'token' => $token,
-            'email_verification_required' => false,
+            'email_verification_required' => true,
         ], 201);
     }
 
@@ -88,6 +83,7 @@ class AuthController extends Controller
         }
 
         $payload = $user->only(['id', 'name', 'email', 'role']);
+        $payload['email_verified'] = $user->hasVerifiedEmail();
 
         if ($user->role === 'agent') {
             $payload['agent_location'] = $user->agentLocation

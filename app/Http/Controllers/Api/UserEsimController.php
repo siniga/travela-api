@@ -50,6 +50,48 @@ class UserEsimController extends Controller
     }
 
     /**
+     * LPA activation string for the user's assigned eSIM (from imported QR payload).
+     */
+    public function activation(Request $request, UserEsim $userEsim): JsonResponse
+    {
+        if ((int) $userEsim->user_id !== (int) $request->user()->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You do not have access to this eSIM.',
+            ], 403);
+        }
+
+        $userEsim->loadMissing('esim');
+        $esim = $userEsim->esim;
+
+        if (! $esim || $esim->sim_type !== Esim::SIM_TYPE_ESIM) {
+            return response()->json([
+                'success' => false,
+                'message' => 'eSIM activation is not available.',
+                'data' => ['qr_code_data' => null],
+            ], 404);
+        }
+
+        $lpaString = trim((string) ($esim->qr_code_data ?? ''));
+
+        if ($lpaString === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'eSIM activation is not available.',
+                'data' => ['qr_code_data' => null],
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'qr_code_data' => $lpaString,
+                'lpa_string' => $lpaString,
+            ],
+        ]);
+    }
+
+    /**
      * Poll-friendly status: has the user been assigned a SIM yet? Is inventory available?
      * Frontend can call this every ~5 minutes (no assignment side effects).
      */
