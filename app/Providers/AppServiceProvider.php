@@ -6,6 +6,7 @@ use App\Services\ResendMailConfigurator;
 use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
+use Symfony\Component\Mime\Address;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -30,7 +31,8 @@ class AppServiceProvider extends ServiceProvider
             $fromAddress = app(ResendMailConfigurator::class)->resolvedFromAddress();
             $fromName = (string) config('mail.from.name', 'Travela');
 
-            $event->message->from($fromAddress, $fromName);
+            // Symfony Email::from() takes Address args — not (email, name) positional pairs.
+            $event->message->from(new Address($fromAddress, $fromName));
         });
     }
 
