@@ -82,8 +82,13 @@ class UserEsim extends Model
     public function toAssignmentArray(): array
     {
         $service = app(UserEsimOrderLinkService::class);
+        $this->loadMissing('esim');
+
         $data = $this->toArray();
         $data['bundle'] = $service->bundleForAssignment($this);
+        $data['esim'] = $this->esim
+            ? $this->esim->toUserAssignmentApiArray()
+            : null;
 
         if (! $this->order_id) {
             $data['latest_order'] = $service->latestOrderForUser((int) $this->user_id);

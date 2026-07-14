@@ -15,6 +15,9 @@ return [
     */
     'resend' => [
         'key' => env('RESEND_KEY'),
+        // Preferred verified sending domain (must match Resend dashboard)
+        'domain' => env('RESEND_DOMAIN', 'thetravela.com'),
+        'from_local' => env('MAIL_FROM_LOCAL', 'noreply'),
     ],
 
     'evpay' => [

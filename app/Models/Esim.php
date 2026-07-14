@@ -68,6 +68,33 @@ class Esim extends Model
         ];
     }
 
+    /**
+     * Complete eSIM payload for an authenticated owner's assignment responses.
+     * Activation uses `qr_code_data` (imported QR/LPA payload) — not `lpa_string`.
+     *
+     * @return array<string, mixed>
+     */
+    public function toUserAssignmentApiArray(): array
+    {
+        $qrCodeData = trim((string) ($this->qr_code_data ?? ''));
+
+        return [
+            'id' => $this->id,
+            'msisdn' => $this->msisdn,
+            'phone_number' => $this->msisdn,
+            'iccid' => $this->iccid,
+            'imsi' => $this->imsi,
+            'description' => $this->description,
+            'status' => $this->status,
+            'sale_status' => $this->sale_status,
+            'sim_type' => $this->sim_type,
+            'provider_status' => $this->provider_status,
+            'network_id' => $this->network_id,
+            'qr_code_data' => $qrCodeData !== '' ? $qrCodeData : null,
+            'has_activation_data' => $qrCodeData !== '',
+        ];
+    }
+
     public static function normalizeMsisdn(string $msisdn): string
     {
         return ltrim(preg_replace('/\s+/', '', trim($msisdn)), '+');

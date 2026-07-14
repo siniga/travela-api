@@ -33,15 +33,23 @@ class EmailVerificationService
 
             return ['sent' => true, 'message' => null];
         } catch (Throwable $e) {
+            $error = $e->getMessage();
+
             Log::error('Failed to send email verification code', [
                 'user_id' => $user->id,
                 'email' => $user->email,
-                'error' => $e->getMessage(),
+                'mailer' => config('mail.default'),
+                'error' => $error,
             ]);
+
+            $message = 'We could not send the verification email. Please use resend code or try again shortly.';
+            if (str_contains($error, 'domain is not verified')) {
+                $message = 'We could not send the verification email because the sending domain is not verified yet. Please try resend in a few minutes or contact support.';
+            }
 
             return [
                 'sent' => false,
-                'message' => 'We could not send the verification email. Please use resend code or try again shortly.',
+                'message' => $message,
             ];
         }
     }

@@ -50,7 +50,7 @@ class UserEsimController extends Controller
     }
 
     /**
-     * LPA activation string for the user's assigned eSIM (from imported QR payload).
+     * Activation payload (`qr_code_data`) for the user's assigned eSIM (from import).
      */
     public function activation(Request $request, UserEsim $userEsim): JsonResponse
     {
@@ -67,26 +67,32 @@ class UserEsimController extends Controller
         if (! $esim || $esim->sim_type !== Esim::SIM_TYPE_ESIM) {
             return response()->json([
                 'success' => false,
-                'message' => 'eSIM activation is not available.',
-                'data' => ['qr_code_data' => null],
+                'message' => 'Activation data is not available for this eSIM.',
+                'data' => [
+                    'esim' => null,
+                    'qr_code_data' => null,
+                ],
             ], 404);
         }
 
-        $lpaString = trim((string) ($esim->qr_code_data ?? ''));
+        $qrCodeData = trim((string) ($esim->qr_code_data ?? ''));
 
-        if ($lpaString === '') {
+        if ($qrCodeData === '') {
             return response()->json([
                 'success' => false,
-                'message' => 'eSIM activation is not available.',
-                'data' => ['qr_code_data' => null],
+                'message' => 'Activation data is not available for this eSIM.',
+                'data' => [
+                    'esim' => $esim->toUserAssignmentApiArray(),
+                    'qr_code_data' => null,
+                ],
             ], 404);
         }
 
         return response()->json([
             'success' => true,
             'data' => [
-                'qr_code_data' => $lpaString,
-                'lpa_string' => $lpaString,
+                'esim' => $esim->toUserAssignmentApiArray(),
+                'qr_code_data' => $qrCodeData,
             ],
         ]);
     }

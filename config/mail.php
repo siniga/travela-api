@@ -65,6 +65,16 @@ return [
             'transport' => 'resend',
         ],
 
+        // Tries Resend first, then SMTP (configure MAIL_HOST etc. for Hostinger/cPanel).
+        'resend_smtp_failover' => [
+            'transport' => 'failover',
+            'mailers' => [
+                'resend',
+                'smtp',
+            ],
+            'retry_after' => 60,
+        ],
+
         'sendmail' => [
             'transport' => 'sendmail',
             'path' => env('MAIL_SENDMAIL_PATH', '/usr/sbin/sendmail -bs -i'),
@@ -111,7 +121,7 @@ return [
     */
 
     'from' => [
-        'address' => env('MAIL_FROM_ADDRESS', 'hello@example.com'),
+        'address' => env('MAIL_FROM_ADDRESS', 'noreply@'.env('RESEND_DOMAIN', 'thetravela.com')),
         'name' => env('MAIL_FROM_NAME', 'Example'),
     ],
 
