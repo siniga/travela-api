@@ -98,6 +98,46 @@ class UserEsimController extends Controller
     }
 
     /**
+     * Record that the user installed this eSIM profile on their device.
+     * Idempotent — safe to call again after the first successful mark.
+     */
+    public function markDeviceActivated(Request $request, UserEsim $userEsim): JsonResponse
+    {
+        if ((int) $userEsim->user_id !== (int) $request->user()->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You do not have access to this eSIM.',
+            ], 403);
+        }
+
+        $userEsim->loadMissing('esim');
+        $esim = $userEsim->esim;
+
+        if (! $esim || $esim->sim_type !== Esim::SIM_TYPE_ESIM) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Device activation tracking is only available for eSIM assignments.',
+            ], 422);
+        }
+
+        $alreadyActivated = $userEsim->device_activated_at !== null;
+
+        if (! $alreadyActivated) {
+            $userEsim->forceFill(['device_activated_at' => now()])->save();
+        }
+
+        $userEsim->loadMissing(['esim', 'bundle', 'order', 'orderItem']);
+
+        return response()->json([
+            'success' => true,
+            'message' => $alreadyActivated
+                ? 'eSIM was already marked as activated on your device.'
+                : 'eSIM marked as activated on your device.',
+            'data' => $userEsim->toAssignmentArray(),
+        ], $alreadyActivated ? 200 : 201);
+    }
+
+    /**
      * Poll-friendly status: has the user been assigned a SIM yet? Is inventory available?
      * Frontend can call this every ~5 minutes (no assignment side effects).
      */
