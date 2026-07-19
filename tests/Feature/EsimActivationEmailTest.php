@@ -43,10 +43,6 @@ class EsimActivationEmailTest extends TestCase
 
     public function test_activation_email_is_sent_once_when_assignment_is_created(): void
     {
-        if (! extension_loaded('gd')) {
-            $this->markTestSkipped('GD extension is required to generate QR images.');
-        }
-
         Mail::fake();
 
         $user = User::factory()->create([
@@ -86,7 +82,8 @@ class EsimActivationEmailTest extends TestCase
         Mail::assertSent(EsimActivationQrMail::class, function (EsimActivationQrMail $mail) use ($user) {
             return $mail->hasTo($user->email)
                 && $mail->msisdn === '255793045401'
-                && str_contains($mail->qrDataUri, 'data:image/png;base64,');
+                && $mail->iccid === '8925500000000000101'
+                && str_contains($mail->dashboardUrl, '/dashboard');
         });
 
         Mail::assertSentCount(1);
