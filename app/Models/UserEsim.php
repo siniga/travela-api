@@ -26,6 +26,7 @@ class UserEsim extends Model
         'physical_issued_by',
         'physical_issued_location',
         'device_activated_at',
+        'activation_email_sent_at',
     ];
 
     protected $casts = [
@@ -36,6 +37,7 @@ class UserEsim extends Model
         'last_recharged_at'    => 'datetime',
         'physical_issued_at'   => 'datetime',
         'device_activated_at'  => 'datetime',
+        'activation_email_sent_at' => 'datetime',
     ];
 
     public function user()

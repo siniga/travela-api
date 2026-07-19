@@ -15,6 +15,7 @@ class SimAssignmentService
     public function __construct(
         private readonly UserEsimOrderLinkService $esimOrderLink,
         private readonly OrderRechargeService $orderRecharge,
+        private readonly EsimActivationEmailService $activationEmail,
     ) {
     }
 
@@ -271,8 +272,11 @@ class SimAssignmentService
                 ->first();
 
             if ($existing) {
-                return $this->esimOrderLink->linkAssignmentToOrder($existing, $order)
+                $assignment = $this->esimOrderLink->linkAssignmentToOrder($existing, $order)
                     ->load(['esim', 'bundle', 'order', 'orderItem']);
+                $this->notifyActivationEmail($assignment);
+
+                return $assignment;
             }
 
             $esim = $this->nextAvailableQuery(Esim::SIM_TYPE_ESIM)->lockForUpdate()->first();
@@ -289,9 +293,24 @@ class SimAssignmentService
 
             $assignment = $this->esimOrderLink->linkAssignmentToOrder($assignment, $order);
             $this->updateOrderSimMetadata($order, $assignment);
+            $assignment = $assignment->load(['esim', 'bundle', 'order', 'orderItem']);
+            $this->notifyActivationEmail($assignment);
 
-            return $assignment->load(['esim', 'bundle', 'order', 'orderItem']);
+            return $assignment;
         });
+    }
+
+    private function notifyActivationEmail(UserEsim $assignment): void
+    {
+        try {
+            $this->activationEmail->sendIfEligible($assignment);
+        } catch (\Throwable $e) {
+            Log::warning('eSIM activation email dispatch failed', [
+                'user_esim_id' => $assignment->id,
+                'user_id' => $assignment->user_id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     private function nextAvailableQuery(string $simType)
