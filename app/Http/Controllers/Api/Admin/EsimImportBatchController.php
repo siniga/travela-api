@@ -144,6 +144,86 @@ class EsimImportBatchController extends Controller
         }
     }
 
+    /**
+     * Import every page from a multi-page PDF (or a single image) in one request.
+     */
+    public function importDocument(Request $request, EsimImportBatch $batch): JsonResponse
+    {
+        if ($batch->status === EsimImportBatch::STATUS_CANCELLED) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This import batch is cancelled.',
+            ], 422);
+        }
+
+        $validated = $request->validate([
+            'file' => ['required', 'file', 'mimes:pdf,png,jpg,jpeg', 'max:51200'],
+        ]);
+
+        $file = $validated['file'];
+        $mime = strtolower($file->getMimeType() ?? '');
+        $extension = strtolower($file->getClientOriginalExtension() ?: 'bin');
+        $isPdf = $extension === 'pdf' || str_contains($mime, 'pdf');
+
+        $batch->reopenForProcessing();
+
+        $pageNumbers = $isPdf
+            ? range(1, $this->importService->countPdfPages($file))
+            : [1];
+
+        if ($batch->total_items !== count($pageNumbers)) {
+            $batch->update(['total_items' => count($pageNumbers)]);
+        }
+
+        $results = [];
+
+        foreach ($pageNumbers as $pageNumber) {
+            try {
+                $result = $this->importService->processPdfPage($batch, $file, $pageNumber);
+                $batch->recordItemSuccess();
+
+                $results[] = [
+                    'page_number' => $pageNumber,
+                    'success' => true,
+                    'item' => $result['item']->toResponseArray(),
+                    'esim' => $result['esim']->toImportApiArray(),
+                ];
+            } catch (\Throwable $e) {
+                Log::warning('eSIM document page import failed', [
+                    'batch_id' => $batch->id,
+                    'page_number' => $pageNumber,
+                    'error' => $e->getMessage(),
+                ]);
+
+                $batch->recordItemFailure();
+
+                $failedItem = $batch->items()
+                    ->where('page_number', $pageNumber)
+                    ->latest('id')
+                    ->first();
+
+                $results[] = [
+                    'page_number' => $pageNumber,
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                    'item' => $failedItem?->toResponseArray(),
+                ];
+            }
+        }
+
+        $batch->refresh();
+        $failedCount = collect($results)->where('success', false)->count();
+
+        return response()->json([
+            'success' => $failedCount === 0,
+            'message' => $failedCount === 0
+                ? 'Document imported successfully.'
+                : sprintf('%d of %d page(s) failed to import.', $failedCount, count($results)),
+            'items' => $results,
+            'batch' => $batch->toSummaryArray(),
+        ], $failedCount === 0 ? 200 : 422);
+    }
+
     public function finish(EsimImportBatch $batch): JsonResponse
     {
         $batch->refresh();

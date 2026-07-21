@@ -79,6 +79,16 @@ class EsimImportBatch extends Model
         $this->increment('failed_items');
     }
 
+    public function reopenForProcessing(): void
+    {
+        if ($this->status === self::STATUS_COMPLETED) {
+            $this->update([
+                'status' => self::STATUS_PROCESSING,
+                'completed_at' => null,
+            ]);
+        }
+    }
+
     public function attemptFinish(): void
     {
         $handled = $this->processed_items + $this->failed_items;

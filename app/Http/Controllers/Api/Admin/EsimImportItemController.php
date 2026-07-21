@@ -36,12 +36,14 @@ class EsimImportItemController extends Controller
             ], 404);
         }
 
-        if (in_array($batch->status, [EsimImportBatch::STATUS_COMPLETED, EsimImportBatch::STATUS_CANCELLED], true)) {
+        if ($batch->status === EsimImportBatch::STATUS_CANCELLED) {
             return response()->json([
                 'success' => false,
-                'message' => 'This import batch is closed.',
+                'message' => 'This import batch is cancelled.',
             ], 422);
         }
+
+        $batch->reopenForProcessing();
 
         $validated = $request->validate([
             'file' => ['nullable', 'file', 'mimes:pdf,png,jpg,jpeg', 'max:5120'],

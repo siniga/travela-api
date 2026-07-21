@@ -8,11 +8,11 @@ use Illuminate\Support\Str;
 class PdfPageRasterizer
 {
     /**
-     * Render the first page of a PDF to PNG images at several DPI settings.
+     * Render a PDF page to PNG images at several DPI settings.
      *
      * @return list<array{binary: string, extension: string}>
      */
-    public function rasterizeFirstPageVariants(string $pdfPath): array
+    public function rasterizePageVariants(string $pdfPath, int $pageIndex = 0): array
     {
         if (! is_file($pdfPath)) {
             return [];
@@ -22,7 +22,7 @@ class PdfPageRasterizer
         $seen = [];
 
         foreach ([200, 300, 400] as $dpi) {
-            $raster = $this->rasterizeAtDpi($pdfPath, $dpi);
+            $raster = $this->rasterizeAtDpi($pdfPath, $dpi, $pageIndex);
             if ($raster === null) {
                 continue;
             }
@@ -37,10 +37,21 @@ class PdfPageRasterizer
         }
 
         if ($variants === []) {
-            Log::debug('eSIM PDF rasterization unavailable', ['pdf' => basename($pdfPath)]);
+            Log::debug('eSIM PDF rasterization unavailable', [
+                'pdf' => basename($pdfPath),
+                'page_index' => $pageIndex,
+            ]);
         }
 
         return $variants;
+    }
+
+    /**
+     * @return list<array{binary: string, extension: string}>
+     */
+    public function rasterizeFirstPageVariants(string $pdfPath): array
+    {
+        return $this->rasterizePageVariants($pdfPath, 0);
     }
 
     /**
@@ -56,23 +67,25 @@ class PdfPageRasterizer
     /**
      * @return array{binary: string, extension: string}|null
      */
-    private function rasterizeAtDpi(string $pdfPath, int $dpi): ?array
+    private function rasterizeAtDpi(string $pdfPath, int $dpi, int $pageIndex = 0): ?array
     {
-        $viaImagick = $this->viaImagick($pdfPath, $dpi);
+        $viaImagick = $this->viaImagick($pdfPath, $dpi, $pageIndex);
         if ($viaImagick !== null) {
             Log::debug('eSIM PDF rasterized via Imagick', [
                 'pdf' => basename($pdfPath),
                 'dpi' => $dpi,
+                'page_index' => $pageIndex,
             ]);
 
             return $viaImagick;
         }
 
-        $viaGhostscript = $this->viaGhostscript($pdfPath, $dpi);
+        $viaGhostscript = $this->viaGhostscript($pdfPath, $dpi, $pageIndex);
         if ($viaGhostscript !== null) {
             Log::debug('eSIM PDF rasterized via Ghostscript', [
                 'pdf' => basename($pdfPath),
                 'dpi' => $dpi,
+                'page_index' => $pageIndex,
             ]);
 
             return $viaGhostscript;
@@ -84,7 +97,7 @@ class PdfPageRasterizer
     /**
      * @return array{binary: string, extension: string}|null
      */
-    private function viaImagick(string $pdfPath, int $dpi = 300): ?array
+    private function viaImagick(string $pdfPath, int $dpi = 300, int $pageIndex = 0): ?array
     {
         if (! extension_loaded('imagick')) {
             return null;
@@ -93,7 +106,7 @@ class PdfPageRasterizer
         try {
             $imagick = new \Imagick();
             $imagick->setResolution($dpi, $dpi);
-            $imagick->readImage($pdfPath.'[0]');
+            $imagick->readImage($pdfPath.'['.$pageIndex.']');
             $imagick->setImageFormat('png');
             $imagick->setImageAlphaChannel(\Imagick::ALPHACHANNEL_REMOVE);
             $binary = $imagick->getImageBlob();
@@ -115,7 +128,7 @@ class PdfPageRasterizer
     /**
      * @return array{binary: string, extension: string}|null
      */
-    private function viaGhostscript(string $pdfPath, int $dpi = 300): ?array
+    private function viaGhostscript(string $pdfPath, int $dpi = 300, int $pageIndex = 0): ?array
     {
         $binary = $this->findGhostscriptBinary();
         if ($binary === null) {
@@ -125,10 +138,13 @@ class PdfPageRasterizer
         $outputPath = storage_path('app/private/esims/tmp/'.Str::uuid().'.png');
         @mkdir(dirname($outputPath), 0755, true);
 
+        $pageNumber = $pageIndex + 1;
         $command = sprintf(
-            '%s -dSAFER -dBATCH -dNOPAUSE -sDEVICE=png16m -r%d -dFirstPage=1 -dLastPage=1 -sOutputFile=%s %s',
+            '%s -dSAFER -dBATCH -dNOPAUSE -sDEVICE=png16m -r%d -dFirstPage=%d -dLastPage=%d -sOutputFile=%s %s',
             escapeshellarg($binary),
             $dpi,
+            $pageNumber,
+            $pageNumber,
             escapeshellarg($outputPath),
             escapeshellarg($pdfPath),
         );
