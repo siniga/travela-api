@@ -34,6 +34,7 @@ class Esim extends Model
         'sale_status',
         'sim_type',
         'provider_status',
+        'vodacom_activated_at',
         'qr_code_path',
         'qr_code_data',
         'balances',
@@ -45,6 +46,7 @@ class Esim extends Model
         'import_batch_id' => 'integer',
         'balances' => 'array',
         'balance_fetched_at' => 'datetime',
+        'vodacom_activated_at' => 'datetime',
     ];
 
     public function importBatch(): BelongsTo
@@ -89,6 +91,7 @@ class Esim extends Model
             'sale_status' => $this->sale_status,
             'sim_type' => $this->sim_type,
             'provider_status' => $this->provider_status,
+            'vodacom_activated_at' => $this->vodacom_activated_at,
             'network_id' => $this->network_id,
             'qr_code_data' => $qrCodeData !== '' ? $qrCodeData : null,
             'has_activation_data' => $qrCodeData !== '',

@@ -10,7 +10,9 @@ use App\Models\UserEsim;
 use App\Services\EsimActivationEmailService;
 use App\Services\QrCode\LpaQrCodeGenerator;
 use App\Services\SimAssignmentService;
+use App\Services\VodacomSimManagerService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
@@ -44,6 +46,12 @@ class EsimActivationEmailTest extends TestCase
     public function test_activation_email_is_sent_once_when_assignment_is_created(): void
     {
         Mail::fake();
+
+        $this->mock(VodacomSimManagerService::class, function ($mock) {
+            $mock->shouldReceive('post')
+                ->with('/api/sims-activate', \Mockery::type('array'))
+                ->andReturn(Http::response(['status' => 'SUCCESS'], 200));
+        });
 
         $user = User::factory()->create([
             'email' => 'esim-customer@example.com',

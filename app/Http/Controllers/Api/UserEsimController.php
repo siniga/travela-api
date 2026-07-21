@@ -414,6 +414,26 @@ class UserEsimController extends Controller
             return null;
         }
 
+        $assignment = UserEsim::query()
+            ->where('user_id', $userId)
+            ->with('esim')
+            ->whereHas('esim', fn ($q) => $q->whereNotNull('msisdn')->where('msisdn', '!=', ''))
+            ->orderByDesc('id')
+            ->first();
+
+        if ($assignment) {
+            $activation = $this->simAssignment->activateAssignmentSafely($assignment);
+            if (! ($activation['success'] ?? false)) {
+                return [
+                    'processed' => 0,
+                    'skipped' => 0,
+                    'failed' => 0,
+                    'errors' => [$activation['error'] ?? 'Vodacom activation failed.'],
+                    'recharge_status' => 'pending_activation',
+                ];
+            }
+        }
+
         try {
             return $this->orderRecharge->rechargePaidOrder($order);
         } catch (\Throwable $e) {

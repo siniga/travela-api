@@ -93,6 +93,13 @@ class OrderRechargeTest extends TestCase
         $this->mock(VodacomSimManagerService::class, function ($mock) {
             $mock->shouldReceive('post')
                 ->once()
+                ->ordered()
+                ->with('/api/sims-activate', \Mockery::type('array'))
+                ->andReturn(Http::response(['status' => 'SUCCESS'], 200));
+
+            $mock->shouldReceive('post')
+                ->once()
+                ->ordered()
                 ->with('/api/recharge', [], \Mockery::type('array'), \Mockery::any())
                 ->andReturn(Http::response(['status' => 'SUCCESS', 'transaction_id' => 'tx-1'], 200));
         });
@@ -248,6 +255,7 @@ class OrderRechargeTest extends TestCase
             'total_amount' => 90.00,
             'currency' => 'USD',
             'paid_at' => $pending ? null : now(),
+            'metadata' => ['simType' => Esim::SIM_TYPE_ESIM],
         ]);
 
         $item = OrderItem::create([
