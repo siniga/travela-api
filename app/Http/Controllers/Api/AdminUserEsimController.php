@@ -8,7 +8,6 @@ use App\Models\User;
 use App\Models\UserEsim;
 use App\Models\Order;
 use App\Services\UserEsimOrderLinkService;
-use App\Services\VodacomActivationService;
 use App\Services\VodacomSimManagerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,7 +17,6 @@ class AdminUserEsimController extends Controller
     public function __construct(
         private readonly VodacomSimManagerService $vodacom,
         private readonly UserEsimOrderLinkService $esimOrderLink,
-        private readonly VodacomActivationService $vodacomActivation,
     ) {
     }
 
@@ -98,13 +96,8 @@ class AdminUserEsimController extends Controller
 
         $assignment->load(['user:id,name,email,role', 'esim', 'bundle', 'order', 'orderItem']);
 
-        $activation = $assignment->esim
-            ? $this->vodacomActivation->activateIfNeeded($assignment->esim)
-            : null;
-
         return response()->json([
             'assignment' => $assignment->toAssignmentArray(),
-            'activation' => $activation,
         ], 201);
     }
 

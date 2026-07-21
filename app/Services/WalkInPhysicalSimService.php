@@ -6,7 +6,6 @@ use App\Mail\WalkInCustomerLoginMail;
 use App\Models\Esim;
 use App\Models\User;
 use App\Models\UserEsim;
-use App\Services\VodacomActivationService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -88,10 +87,6 @@ class WalkInPhysicalSimService
             $input['customer_name'],
         );
 
-        $activation = $assignment->esim
-            ? app(VodacomActivationService::class)->activateIfNeeded($assignment->esim)
-            : null;
-
         return [
             'user_id' => $assignment->user_id,
             'esim_id' => $assignment->esim_id,
@@ -99,7 +94,6 @@ class WalkInPhysicalSimService
             'iccid' => $assignment->esim?->iccid,
             'email_sent' => $emailSent,
             'user_created' => $userCreated,
-            'activation' => $activation,
         ];
     }
 

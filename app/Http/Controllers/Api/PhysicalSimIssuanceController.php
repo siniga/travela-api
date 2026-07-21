@@ -6,11 +6,13 @@ use App\Http\Controllers\Controller;
 use App\Models\Esim;
 use App\Models\Order;
 use App\Models\UserEsim;
+use App\Services\OrderRechargeService;
 use App\Services\PhysicalSimIssuanceService;
 use App\Services\SimAssignmentService;
 use App\Services\WalkInPhysicalSimService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
@@ -19,6 +21,7 @@ class PhysicalSimIssuanceController extends Controller
     public function __construct(
         private readonly PhysicalSimIssuanceService $issuance,
         private readonly SimAssignmentService $simAssignment,
+        private readonly OrderRechargeService $orderRecharge,
         private readonly WalkInPhysicalSimService $walkInPhysicalSim,
     ) {
     }
@@ -41,7 +44,7 @@ class PhysicalSimIssuanceController extends Controller
 
         $assignment = $this->simAssignment->assignPhysicalSimToPaidOrder($order, $esim);
 
-        $fulfillment = $this->simAssignment->fulfillOrderAfterAssignment($order->fresh(), $assignment);
+        $recharge = $this->rechargeSafely($order->fresh());
 
         return response()->json([
             'success' => true,
@@ -53,8 +56,7 @@ class PhysicalSimIssuanceController extends Controller
                     'sim_type' => Esim::SIM_TYPE_PHYSICAL,
                     'reason' => 'assigned_by_agent',
                 ],
-                'activation' => $fulfillment['activation'] ?? null,
-                'recharge' => $fulfillment['recharge'] ?? null,
+                'recharge' => $recharge,
             ],
         ], 201);
     }
@@ -198,5 +200,28 @@ class PhysicalSimIssuanceController extends Controller
         }
 
         return $esim;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function rechargeSafely(Order $order): ?array
+    {
+        try {
+            return $this->orderRecharge->rechargePaidOrder($order);
+        } catch (\Throwable $e) {
+            Log::error('Order recharge failed after physical SIM assignment', [
+                'order_id' => $order->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [
+                'processed' => 0,
+                'skipped' => 0,
+                'failed' => 0,
+                'errors' => [$e->getMessage()],
+                'recharge_status' => 'failed',
+            ];
+        }
     }
 }

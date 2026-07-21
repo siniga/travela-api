@@ -16,6 +16,12 @@ class Esim extends Model
 
     public const PROVIDER_STATUS_SUSPENDED = 'suspended';
 
+    public const ACTIVATION_STATUS_PENDING = 'pending';
+
+    public const ACTIVATION_STATUS_SUCCESS = 'success';
+
+    public const ACTIVATION_STATUS_FAILED = 'failed';
+
     public const SALE_STATUS_AVAILABLE = 'available';
 
     public const SALE_STATUS_SOLD = 'sold';
@@ -34,6 +40,9 @@ class Esim extends Model
         'sale_status',
         'sim_type',
         'provider_status',
+        'activation_status',
+        'activation_error',
+        'vodacom_activation_response',
         'vodacom_activated_at',
         'qr_code_path',
         'qr_code_data',
@@ -46,6 +55,7 @@ class Esim extends Model
         'import_batch_id' => 'integer',
         'balances' => 'array',
         'balance_fetched_at' => 'datetime',
+        'vodacom_activation_response' => 'array',
         'vodacom_activated_at' => 'datetime',
     ];
 
@@ -67,6 +77,8 @@ class Esim extends Model
             'status' => $this->sale_status ?? self::SALE_STATUS_AVAILABLE,
             'import_batch_id' => $this->import_batch_id,
             'has_qr_code' => (bool) $this->qr_code_path,
+            'activation_status' => $this->activation_status,
+            'vodacom_activated_at' => $this->vodacom_activated_at,
         ];
     }
 
@@ -91,7 +103,6 @@ class Esim extends Model
             'sale_status' => $this->sale_status,
             'sim_type' => $this->sim_type,
             'provider_status' => $this->provider_status,
-            'vodacom_activated_at' => $this->vodacom_activated_at,
             'network_id' => $this->network_id,
             'qr_code_data' => $qrCodeData !== '' ? $qrCodeData : null,
             'has_activation_data' => $qrCodeData !== '',
@@ -123,12 +134,36 @@ class Esim extends Model
                 $q->whereNull('sale_status')
                     ->orWhere('sale_status', self::SALE_STATUS_AVAILABLE);
             })
+            ->where('provider_status', self::PROVIDER_STATUS_ACTIVE)
+            ->where('activation_status', self::ACTIVATION_STATUS_SUCCESS)
+            ->whereNotNull('vodacom_activated_at')
             ->whereNotIn('id', UserEsim::query()->select('esim_id'));
+    }
+
+    public function scopeVodacomActivated(Builder $query): Builder
+    {
+        return $query
+            ->where('activation_status', self::ACTIVATION_STATUS_SUCCESS)
+            ->whereNotNull('vodacom_activated_at')
+            ->where('provider_status', self::PROVIDER_STATUS_ACTIVE);
     }
 
     public function isAssigned(): bool
     {
         return UserEsim::query()->where('esim_id', $this->id)->exists();
+    }
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
+    public static function vodacomActivatedDefaults(array $overrides = []): array
+    {
+        return array_merge([
+            'provider_status' => self::PROVIDER_STATUS_ACTIVE,
+            'activation_status' => self::ACTIVATION_STATUS_SUCCESS,
+            'vodacom_activated_at' => now(),
+        ], $overrides);
     }
 }
 

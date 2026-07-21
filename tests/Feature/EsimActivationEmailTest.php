@@ -10,9 +10,7 @@ use App\Models\UserEsim;
 use App\Services\EsimActivationEmailService;
 use App\Services\QrCode\LpaQrCodeGenerator;
 use App\Services\SimAssignmentService;
-use App\Services\VodacomSimManagerService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
@@ -47,27 +45,20 @@ class EsimActivationEmailTest extends TestCase
     {
         Mail::fake();
 
-        $this->mock(VodacomSimManagerService::class, function ($mock) {
-            $mock->shouldReceive('post')
-                ->with('/api/sims-activate', \Mockery::type('array'))
-                ->andReturn(Http::response(['status' => 'SUCCESS'], 200));
-        });
-
         $user = User::factory()->create([
             'email' => 'esim-customer@example.com',
             'name' => 'Jane Doe',
         ]);
 
-        Esim::query()->create([
+        Esim::query()->create(array_merge(Esim::vodacomActivatedDefaults(), [
             'msisdn' => '255793045401',
             'iccid' => '8925500000000000101',
             'sim_type' => Esim::SIM_TYPE_ESIM,
             'status' => 'AVAILABLE',
             'sale_status' => Esim::SALE_STATUS_AVAILABLE,
-            'provider_status' => Esim::PROVIDER_STATUS_ACTIVE,
             'network_id' => 1,
             'qr_code_data' => 'LPA:1$smdp.example.com$EMAIL-QR',
-        ]);
+        ]));
 
         $order = Order::query()->create([
             'draft_id' => 'DRAFT-EMAIL-001',

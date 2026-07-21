@@ -10,6 +10,7 @@ use App\Models\Esim;
 use App\Models\UserEsim;
 use App\Services\VodacomBalanceService;
 use App\Services\VodacomRechargePayload;
+use App\Services\VodacomSimActivationService;
 use App\Services\VodacomSimManagerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -20,6 +21,7 @@ class EsimController extends Controller
     public function __construct(
         private readonly VodacomSimManagerService $vodacom,
         private readonly VodacomBalanceService $balances,
+        private readonly VodacomSimActivationService $simActivation,
     ) {
     }
 
@@ -47,8 +49,43 @@ class EsimController extends Controller
 
     public function activate(EsimActivateRequest $request)
     {
-        $query = array_filter($request->only(['msisdn', 'iccid', 'imsi']), fn ($v) => ! is_null($v) && $v !== '');
-        return $this->proxy($this->vodacom->post('/api/sims-activate', $query));
+        $data = array_filter($request->only(['msisdn', 'iccid', 'imsi']), fn ($v) => ! is_null($v) && $v !== '');
+
+        $esim = null;
+        if (! empty($data['msisdn'])) {
+            $esim = Esim::findByMsisdn((string) $data['msisdn']);
+        } elseif (! empty($data['iccid'])) {
+            $esim = Esim::query()->where('iccid', strtoupper(trim((string) $data['iccid'])))->first();
+        } elseif (! empty($data['imsi'])) {
+            $esim = Esim::query()->where('imsi', trim((string) $data['imsi']))->first();
+        }
+
+        if ($esim) {
+            try {
+                $esim = $this->simActivation->activate($esim);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'SIM activated on Vodacom.',
+                    'data' => $esim->only([
+                        'id',
+                        'msisdn',
+                        'iccid',
+                        'imsi',
+                        'activation_status',
+                        'vodacom_activated_at',
+                        'provider_status',
+                    ]),
+                ]);
+            } catch (\Throwable $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                ], 422);
+            }
+        }
+
+        return $this->proxy($this->vodacom->post('/api/sims-activate', $data));
     }
 
     public function suspend(EsimSuspendRequest $request)

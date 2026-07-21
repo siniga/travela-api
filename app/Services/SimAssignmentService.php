@@ -16,7 +16,6 @@ class SimAssignmentService
         private readonly UserEsimOrderLinkService $esimOrderLink,
         private readonly OrderRechargeService $orderRecharge,
         private readonly EsimActivationEmailService $activationEmail,
-        private readonly VodacomActivationService $vodacomActivation,
     ) {
     }
 
@@ -43,11 +42,10 @@ class SimAssignmentService
      *     sim_type: ?string,
      *     reason: string,
      *     assignment?: UserEsim,
-     *     activation?: array<string, mixed>|null,
      *     recharge?: array<string, mixed>|null
      * }
      */
-    public function assignForPaidOrder(Order $order, ?array $evpayContext = null): array
+    public function assignForPaidOrder(Order $order): array
     {
         $order->refresh();
 
@@ -78,15 +76,11 @@ class SimAssignmentService
 
         $existing = $this->findAssignmentForOrder($order);
         if ($existing) {
-            $fulfillment = $this->fulfillOrderAfterAssignment($order, $existing, $evpayContext);
-
             return [
                 'assigned' => true,
                 'sim_type' => Esim::SIM_TYPE_ESIM,
                 'reason' => 'already_assigned',
                 'assignment' => $existing->loadMissing(['esim', 'bundle', 'order', 'orderItem']),
-                'activation' => $fulfillment['activation'] ?? null,
-                'recharge' => $fulfillment['recharge'] ?? null,
             ];
         }
 
@@ -106,15 +100,14 @@ class SimAssignmentService
             ];
         }
 
-        $fulfillment = $this->fulfillOrderAfterAssignment($order, $assignment, $evpayContext);
+        $recharge = $this->rechargeOrderSafely($order);
 
         return [
             'assigned' => true,
             'sim_type' => Esim::SIM_TYPE_ESIM,
             'reason' => 'assigned',
             'assignment' => $assignment,
-            'activation' => $fulfillment['activation'] ?? null,
-            'recharge' => $fulfillment['recharge'] ?? null,
+            'recharge' => $recharge,
         ];
     }
 
@@ -326,7 +319,7 @@ class SimAssignmentService
             ->where('sim_type', $simType)
             ->whereNotNull('msisdn')
             ->where('msisdn', '!=', '')
-            ->where('provider_status', Esim::PROVIDER_STATUS_ACTIVE)
+            ->vodacomActivated()
             ->whereNotIn('id', UserEsim::query()->select('esim_id'))
             ->orderBy('id');
     }
@@ -345,83 +338,12 @@ class SimAssignmentService
     }
 
     /**
-     * Activate on Vodacom, then recharge the paid order bundle.
-     *
-     * @param  array{payment_id?: string|null, transaction_reference?: string|null}|null  $evpayContext
-     * @return array{activation: array<string, mixed>|null, recharge: array<string, mixed>|null}
-     */
-    public function fulfillOrderAfterAssignment(Order $order, UserEsim $assignment, ?array $evpayContext = null): array
-    {
-        $activation = $this->activateAssignmentSafely($assignment);
-
-        if (! ($activation['success'] ?? false)) {
-            Log::warning('Order recharge skipped: Vodacom activation did not succeed', [
-                'order_id' => $order->id,
-                'user_id' => $order->user_id,
-                'user_esim_id' => $assignment->id,
-                'activation' => $activation,
-            ]);
-
-            return [
-                'activation' => $activation,
-                'recharge' => [
-                    'processed' => 0,
-                    'skipped' => 0,
-                    'failed' => 0,
-                    'errors' => [$activation['error'] ?? 'Vodacom activation failed.'],
-                    'recharge_status' => 'pending_activation',
-                ],
-            ];
-        }
-
-        return [
-            'activation' => $activation,
-            'recharge' => $this->rechargeOrderSafely($order, $evpayContext),
-        ];
-    }
-
-    /**
      * @return array<string, mixed>|null
      */
-    public function activateAssignmentSafely(UserEsim $assignment): ?array
-    {
-        $assignment->loadMissing('esim');
-        $esim = $assignment->esim;
-
-        if (! $esim) {
-            return [
-                'success' => false,
-                'skipped' => false,
-                'error' => 'Assignment has no linked inventory SIM.',
-            ];
-        }
-
-        try {
-            return $this->vodacomActivation->activateIfNeeded($esim);
-        } catch (\Throwable $e) {
-            Log::error('Vodacom activation failed after SIM assignment', [
-                'user_esim_id' => $assignment->id,
-                'user_id' => $assignment->user_id,
-                'esim_id' => $esim->id,
-                'error' => $e->getMessage(),
-            ]);
-
-            return [
-                'success' => false,
-                'skipped' => false,
-                'error' => $e->getMessage(),
-            ];
-        }
-    }
-
-    /**
-     * @param  array{payment_id?: string|null, transaction_reference?: string|null}|null  $evpayContext
-     * @return array<string, mixed>|null
-     */
-    private function rechargeOrderSafely(Order $order, ?array $evpayContext = null): ?array
+    private function rechargeOrderSafely(Order $order): ?array
     {
         try {
-            return $this->orderRecharge->rechargePaidOrder($order->fresh(), $evpayContext);
+            return $this->orderRecharge->rechargePaidOrder($order->fresh());
         } catch (\Throwable $e) {
             Log::error('Order recharge failed after SIM assignment', [
                 'order_id' => $order->id,

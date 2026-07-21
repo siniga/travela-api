@@ -30,6 +30,7 @@ class EsimSingleImportService
     private readonly PdfQrExtractor $pdfQrExtractor;
 
     public function __construct(
+        private readonly VodacomSimActivationService $vodacomActivation,
         ?QrImageDecoder $qrDecoder = null,
         ?QrImageValidator $qrImageValidator = null,
         ?PdfQrExtractor $pdfQrExtractor = null,
@@ -131,7 +132,6 @@ class EsimSingleImportService
             'qr_code_path' => $qrPath,
             'qr_code_data' => $qrCodeData,
             'sim_type' => $batchSimType,
-            'provider_status' => Esim::PROVIDER_STATUS_ACTIVE,
             'description' => $importDescription,
         ], fn ($value) => $value !== null && $value !== '');
 
@@ -139,6 +139,8 @@ class EsimSingleImportService
             $attributes['status'] = 'AVAILABLE';
             $attributes['sale_status'] = Esim::SALE_STATUS_AVAILABLE;
             $attributes['network_id'] = 1;
+            $attributes['provider_status'] = Esim::PROVIDER_STATUS_SUSPENDED;
+            $attributes['activation_status'] = Esim::ACTIVATION_STATUS_PENDING;
         } else {
             if ($qrPath && $existing->qr_code_path && $existing->qr_code_path !== $qrPath) {
                 Storage::disk('local')->delete($existing->qr_code_path);
@@ -152,12 +154,22 @@ class EsimSingleImportService
             if (! $qrPath && $existing->qr_code_path) {
                 unset($attributes['qr_code_path']);
             }
+
+            if (! $this->vodacomActivation->isActivated($existing)) {
+                $attributes['provider_status'] = Esim::PROVIDER_STATUS_SUSPENDED;
+                $attributes['activation_status'] = Esim::ACTIVATION_STATUS_PENDING;
+                $attributes['activation_error'] = null;
+            }
         }
 
         $esim = Esim::query()->updateOrCreate(
             ['msisdn' => $phoneNumber],
             $attributes,
         );
+
+        if (! $this->vodacomActivation->isActivated($esim)) {
+            $esim = $this->vodacomActivation->activate($esim);
+        }
 
         return [
             'esim' => $esim->fresh(),
