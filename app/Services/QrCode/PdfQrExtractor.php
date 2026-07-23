@@ -20,7 +20,7 @@ class PdfQrExtractor
     /**
      * @return array{data: ?string, binary: ?string, extension: string}
      */
-    public function extract(Page $page, string $pdfPath, int $pageIndex = 0): array
+    public function extract(Page $page, string $pdfPath): array
     {
         $fallbackBinary = null;
 
@@ -32,7 +32,7 @@ class PdfQrExtractor
             }
         }
 
-        foreach ($this->rasterizer->rasterizePageVariants($pdfPath, $pageIndex) as $rasterized) {
+        foreach ($this->rasterizer->rasterizeFirstPageVariants($pdfPath) as $rasterized) {
             $fallbackBinary = $this->pickBetterImageCandidate($fallbackBinary, $rasterized['binary']);
             $result = $this->tryDecodeRasterizedPage($rasterized['binary']);
             if ($result !== null) {

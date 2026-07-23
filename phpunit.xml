@@ -30,7 +30,5 @@
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
-        <env name="VODACOM_SIM_BASE_URL" value="https://simmanager.vodacom.co.tz"/>
-        <env name="VODACOM_SIM_API_KEY" value="testing-api-key"/>
     </php>
 </phpunit>

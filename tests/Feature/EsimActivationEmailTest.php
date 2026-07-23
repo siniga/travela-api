@@ -50,15 +50,16 @@ class EsimActivationEmailTest extends TestCase
             'name' => 'Jane Doe',
         ]);
 
-        Esim::query()->create(array_merge(Esim::vodacomActivatedDefaults(), [
+        Esim::query()->create([
             'msisdn' => '255793045401',
             'iccid' => '8925500000000000101',
             'sim_type' => Esim::SIM_TYPE_ESIM,
             'status' => 'AVAILABLE',
             'sale_status' => Esim::SALE_STATUS_AVAILABLE,
+            'provider_status' => Esim::PROVIDER_STATUS_ACTIVE,
             'network_id' => 1,
             'qr_code_data' => 'LPA:1$smdp.example.com$EMAIL-QR',
-        ]));
+        ]);
 
         $order = Order::query()->create([
             'draft_id' => 'DRAFT-EMAIL-001',

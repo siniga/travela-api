@@ -18,6 +18,13 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        $exceptions->render(function (\Illuminate\Http\Exceptions\PostTooLargeException $e, $request) {
+            if ($request->is('api/*') || $request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Upload too large. Ask your server admin to raise nginx client_max_body_size and PHP upload_max_filesize/post_max_size (64M recommended for PDF imports).',
+                ], 413);
+            }
+        });
     })
     ->create();

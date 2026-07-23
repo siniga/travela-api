@@ -319,7 +319,7 @@ class SimAssignmentService
             ->where('sim_type', $simType)
             ->whereNotNull('msisdn')
             ->where('msisdn', '!=', '')
-            ->vodacomActivated()
+            ->where('provider_status', Esim::PROVIDER_STATUS_ACTIVE)
             ->whereNotIn('id', UserEsim::query()->select('esim_id'))
             ->orderBy('id');
     }
