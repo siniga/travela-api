@@ -46,23 +46,22 @@ class EsimSingleImportService
     }
 
     /**
-     * Parse an uploaded file without persisting an eSIM record.
+     * Process one uploaded file for a batch import item.
      *
-     * @return array{
-     *     phone_number: string|null,
-     *     iccid: string|null,
-     *     qr_code_data: string|null,
-     *     qr_binary: string|null,
-     *     qr_extension: string|null,
-     * }
+     * @return array{esim: Esim, created: bool}
      */
-    public function extract(
+    public function process(
+        EsimImportBatch $batch,
+        EsimImportItem $item,
         UploadedFile $file,
         ?string $phoneOverride = null,
         ?string $iccidOverride = null,
     ): array {
-        $phoneOverride = $this->resolvePhoneOverride($phoneOverride, null);
-        $iccidOverride = $this->resolveIccidOverride($iccidOverride, null);
+        $phoneOverride = $this->resolvePhoneOverride($phoneOverride, $item->phone_number);
+        $iccidOverride = $this->resolveIccidOverride($iccidOverride, $item->iccid);
+
+        $sourcePath = $this->storeSourceFile($batch->id, $item->id, $file);
+        $item->update(['source_file_path' => $sourcePath]);
 
         $mime = strtolower($file->getMimeType() ?? '');
         $extension = strtolower($file->getClientOriginalExtension() ?: 'bin');
@@ -99,79 +98,24 @@ class EsimSingleImportService
             }
         }
 
-        $iccid = $iccidOverride ?: $this->extractIccid($text);
-
-        $qrExtension = null;
-        if ($qrBinary) {
-            $normalized = $this->qrImageValidator->normalizeForStorage($qrBinary);
-            if ($normalized !== null) {
-                $qrBinary = $normalized['binary'];
-                $qrExtension = $normalized['extension'];
-            }
-        }
-
-        return [
-            'phone_number' => $phoneNumber,
-            'iccid' => $iccid,
-            'qr_code_data' => $qrCodeData,
-            'qr_binary' => $qrBinary,
-            'qr_extension' => $qrExtension,
-        ];
-    }
-
-    /**
-     * Store source file and create a pending import item for review.
-     */
-    public function storePreview(
-        EsimImportBatch $batch,
-        EsimImportItem $item,
-        UploadedFile $file,
-    ): EsimImportItem {
-        $sourcePath = $this->storeSourceFile($batch->id, $item->id, $file);
-        $item->update(['source_file_path' => $sourcePath]);
-
-        return $item->fresh();
-    }
-
-    /**
-     * Persist extracted data to the esims table.
-     *
-     * @param  array{
-     *     phone_number: string|null,
-     *     iccid: string|null,
-     *     qr_code_data: string|null,
-     *     qr_binary: string|null,
-     *     qr_extension: string|null,
-     * }  $extracted
-     * @return array{esim: Esim, created: bool}
-     */
-    public function persist(
-        EsimImportBatch $batch,
-        EsimImportItem $item,
-        array $extracted,
-        ?string $phoneOverride = null,
-        ?string $iccidOverride = null,
-    ): array {
-        $phoneOverride = $this->resolvePhoneOverride($phoneOverride, $item->phone_number);
-        $iccidOverride = $this->resolveIccidOverride($iccidOverride, $item->iccid);
-
-        $phoneNumber = $phoneOverride
-            ? Esim::normalizeMsisdn($phoneOverride)
-            : ($extracted['phone_number'] ?? null);
-
         if (! $phoneNumber) {
             throw new \RuntimeException('Phone number not found.');
         }
 
-        $iccid = $iccidOverride ?: ($extracted['iccid'] ?? null);
-        $qrCodeData = $extracted['qr_code_data'] ?? null;
-        $qrBinary = $extracted['qr_binary'] ?? null;
-        $qrExtension = $extracted['qr_extension'] ?? 'png';
+        $iccid = $iccidOverride ?: $this->extractIccid($text);
 
         $qrPath = null;
         if ($qrBinary) {
-            $qrPath = $this->storeQrImage($phoneNumber, $qrBinary, $qrExtension);
-            $item->update(['qr_code_path' => $qrPath]);
+            $normalized = $this->qrImageValidator->normalizeForStorage($qrBinary);
+
+            if ($normalized !== null) {
+                $qrPath = $this->storeQrImage(
+                    $phoneNumber,
+                    $normalized['binary'],
+                    $normalized['extension'],
+                );
+                $item->update(['qr_code_path' => $qrPath]);
+            }
         }
 
         $existing = Esim::query()->where('msisdn', $phoneNumber)->first();
@@ -222,26 +166,6 @@ class EsimSingleImportService
     }
 
     /**
-     * Process one uploaded file for a batch import item (legacy auto-import).
-     *
-     * @return array{esim: Esim, created: bool}
-     */
-    public function process(
-        EsimImportBatch $batch,
-        EsimImportItem $item,
-        UploadedFile $file,
-        ?string $phoneOverride = null,
-        ?string $iccidOverride = null,
-    ): array {
-        $sourcePath = $this->storeSourceFile($batch->id, $item->id, $file);
-        $item->update(['source_file_path' => $sourcePath]);
-
-        $extracted = $this->extract($file, $phoneOverride, $iccidOverride);
-
-        return $this->persist($batch, $item, $extracted, $phoneOverride, $iccidOverride);
-    }
-
-    /**
      * Re-process a failed item using stored source file or a new upload.
      *
      * @return array{esim: Esim, created: bool}
@@ -284,73 +208,6 @@ class EsimSingleImportService
         } finally {
             @unlink($tempPath);
         }
-    }
-
-    /**
-     * Re-extract from a stored source file for preview/confirm flow.
-     *
-     * @return array{
-     *     phone_number: string|null,
-     *     iccid: string|null,
-     *     qr_code_data: string|null,
-     *     qr_binary: string|null,
-     *     qr_extension: string|null,
-     * }
-     */
-    public function extractFromStoredSource(
-        EsimImportItem $item,
-        ?string $phoneOverride = null,
-        ?string $iccidOverride = null,
-    ): array {
-        if (! $item->source_file_path || ! Storage::disk('local')->exists($item->source_file_path)) {
-            throw new \RuntimeException('No source file available for this item.');
-        }
-
-        $tempPath = storage_path('app/private/esims/tmp/extract-'.$item->id.'-'.Str::uuid());
-        @mkdir(dirname($tempPath), 0755, true);
-        file_put_contents($tempPath, Storage::disk('local')->get($item->source_file_path));
-
-        $uploaded = new UploadedFile(
-            $tempPath,
-            basename($item->source_file_path),
-            null,
-            null,
-            true,
-        );
-
-        try {
-            return $this->extract(
-                $uploaded,
-                $phoneOverride ?? $item->phone_number,
-                $iccidOverride ?? $item->iccid,
-            );
-        } finally {
-            @unlink($tempPath);
-        }
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function toPreviewArray(array $extracted): array
-    {
-        $qrImageBase64 = null;
-        $qrMimeType = null;
-
-        if (! empty($extracted['qr_binary'])) {
-            $ext = $extracted['qr_extension'] ?? 'png';
-            $qrMimeType = in_array($ext, ['jpg', 'jpeg'], true) ? 'image/jpeg' : 'image/png';
-            $qrImageBase64 = base64_encode($extracted['qr_binary']);
-        }
-
-        return [
-            'phone_number' => $extracted['phone_number'],
-            'iccid' => $extracted['iccid'],
-            'qr_code_data' => $extracted['qr_code_data'],
-            'qr_image_base64' => $qrImageBase64,
-            'qr_mime_type' => $qrMimeType,
-            'has_qr_code' => $qrImageBase64 !== null,
-        ];
     }
 
     public function extractPhoneNumber(string $text): ?string

@@ -144,69 +144,6 @@ class EsimImportBatchController extends Controller
         }
     }
 
-    public function previewItem(Request $request, EsimImportBatch $batch): JsonResponse
-    {
-        if (in_array($batch->status, [EsimImportBatch::STATUS_COMPLETED, EsimImportBatch::STATUS_CANCELLED], true)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'This import batch is no longer accepting items.',
-            ], 422);
-        }
-
-        $validated = $request->validate([
-            'file' => ['required', 'file', 'mimes:pdf,png,jpg,jpeg', 'max:5120'],
-            'page_number' => ['nullable', 'integer', 'min:1'],
-        ]);
-
-        $item = EsimImportItem::query()->create([
-            'esim_import_batch_id' => $batch->id,
-            'page_number' => $validated['page_number'] ?? null,
-            'status' => EsimImportItem::STATUS_PENDING,
-        ]);
-
-        try {
-            $this->importService->storePreview($batch, $item, $validated['file']);
-            $extracted = $this->importService->extract($validated['file']);
-            $preview = $this->importService->toPreviewArray($extracted);
-
-            $item->update([
-                'phone_number' => $preview['phone_number'],
-                'iccid' => $preview['iccid'],
-            ]);
-
-            $batch->markProcessing();
-
-            return response()->json([
-                'success' => true,
-                'item' => $item->fresh()->toResponseArray(),
-                'preview' => $preview,
-                'batch' => $batch->fresh()->toSummaryArray(),
-            ], 201);
-        } catch (\Throwable $e) {
-            Log::warning('eSIM batch item preview failed', [
-                'batch_id' => $batch->id,
-                'item_id' => $item->id,
-                'page_number' => $item->page_number,
-                'error' => $e->getMessage(),
-            ]);
-
-            $item->update([
-                'status' => EsimImportItem::STATUS_FAILED,
-                'error_message' => $e->getMessage(),
-            ]);
-
-            $batch->recordItemFailure();
-            $batch->refresh();
-
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-                'item' => $item->fresh()->toResponseArray(),
-                'batch' => $batch->toSummaryArray(),
-            ], 422);
-        }
-    }
-
     public function finish(EsimImportBatch $batch): JsonResponse
     {
         $batch->refresh();
