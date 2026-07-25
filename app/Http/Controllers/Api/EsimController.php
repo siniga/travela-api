@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\EsimActivateRequest;
+use App\Http\Requests\EsimCreateRequest;
 use App\Http\Requests\EsimRechargeRequest;
 use App\Http\Requests\EsimSuspendRequest;
 use App\Models\Esim;
@@ -45,9 +46,36 @@ class EsimController extends Controller
         return $this->proxy($this->vodacom->get('/api/sims', $query));
     }
 
+    public function storeSim(EsimCreateRequest $request)
+    {
+        $payload = array_filter(
+            $request->only(['msisdn', 'iccid', 'imsi', 'network_id', 'description']),
+            fn ($value) => ! is_null($value) && $value !== '',
+        );
+
+        if (isset($payload['msisdn'])) {
+            $payload['msisdn'] = Esim::toVodacomMsisdn((string) $payload['msisdn']);
+        }
+
+        if (isset($payload['iccid'])) {
+            $payload['iccid'] = strtoupper((string) $payload['iccid']);
+        }
+
+        return $this->proxy($this->vodacom->post('/api/sims', [], $payload));
+    }
+
     public function activate(EsimActivateRequest $request)
     {
         $query = array_filter($request->only(['msisdn', 'iccid', 'imsi']), fn ($v) => ! is_null($v) && $v !== '');
+
+        if (isset($query['msisdn'])) {
+            $query['msisdn'] = Esim::toVodacomMsisdn((string) $query['msisdn']);
+        }
+
+        if (isset($query['iccid'])) {
+            $query['iccid'] = strtoupper((string) $query['iccid']);
+        }
+
         return $this->proxy($this->vodacom->post('/api/sims-activate', $query));
     }
 

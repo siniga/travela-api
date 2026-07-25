@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Esim;
 use App\Models\EsimImportBatch;
 use App\Models\EsimImportItem;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Smalot\PdfParser\Page;
@@ -15,7 +16,6 @@ use App\Services\QrCode\QrImageCoercer;
 use App\Services\QrCode\QrImageDecoder;
 use App\Services\QrCode\QrImageValidator;
 use App\Services\QrCode\QrRegionScanner;
-use Illuminate\Http\UploadedFile;
 
 class EsimSingleImportService
 {
@@ -46,11 +46,18 @@ class EsimSingleImportService
     }
 
     /**
-     * Process one uploaded file for a batch import item.
+     * Parse a file and return extracted fields without saving an Esim row.
      *
-     * @return array{esim: Esim, created: bool}
+     * @return array{
+     *   phone_number: string,
+     *   iccid: string|null,
+     *   qr_code_data: string|null,
+     *   qr_code_path: string|null,
+     *   qr_image_base64: string|null,
+     *   source_file_path: string
+     * }
      */
-    public function process(
+    public function extract(
         EsimImportBatch $batch,
         EsimImportItem $item,
         UploadedFile $file,
@@ -63,60 +70,55 @@ class EsimSingleImportService
         $sourcePath = $this->storeSourceFile($batch->id, $item->id, $file);
         $item->update(['source_file_path' => $sourcePath]);
 
-        $mime = strtolower($file->getMimeType() ?? '');
-        $extension = strtolower($file->getClientOriginalExtension() ?: 'bin');
-        $isPdf = $extension === 'pdf' || str_contains($mime, 'pdf');
-
-        $text = '';
-        $qrBinary = null;
-        $qrCodeData = null;
-
-        if ($isPdf) {
-            $page = $this->loadSinglePdfPage($file);
-            $text = trim($page->getText());
-            $qrPayload = $this->pdfQrExtractor->extract($page, $file->getRealPath());
-            $qrBinary = $qrPayload['binary'];
-            $qrCodeData = $qrPayload['data'];
-        } else {
-            $qrBinary = file_get_contents($file->getRealPath()) ?: null;
-        }
-
-        $phoneNumber = $phoneOverride
-            ? Esim::normalizeMsisdn($phoneOverride)
-            : $this->extractPhoneNumber($text);
-
-        if ($qrBinary && $qrCodeData === null) {
-            $qrCodeData = $this->qrDecoder->decode($qrBinary);
-        }
-
-        if ($qrCodeData) {
-            if (! $phoneNumber) {
-                $phoneNumber = $this->extractPhoneNumber($qrCodeData) ?? $this->extractPhoneFromQrData($qrCodeData);
-            }
-            if (! $iccidOverride) {
-                $iccidOverride = $this->extractIccid($qrCodeData) ?? $iccidOverride;
-            }
-        }
-
-        if (! $phoneNumber) {
-            throw new \RuntimeException('Phone number not found.');
-        }
-
-        $iccid = $iccidOverride ?: $this->extractIccid($text);
+        $parsed = $this->parseUploadedFile($file, $phoneOverride, $iccidOverride);
 
         $qrPath = null;
-        if ($qrBinary) {
-            $normalized = $this->qrImageValidator->normalizeForStorage($qrBinary);
+        $qrImageBase64 = null;
+
+        if ($parsed['qr_binary']) {
+            $normalized = $this->qrImageValidator->normalizeForStorage($parsed['qr_binary']);
 
             if ($normalized !== null) {
                 $qrPath = $this->storeQrImage(
-                    $phoneNumber,
+                    $parsed['phone_number'],
                     $normalized['binary'],
                     $normalized['extension'],
                 );
+                $mime = $normalized['extension'] === 'jpg' ? 'image/jpeg' : 'image/png';
+                $qrImageBase64 = 'data:'.$mime.';base64,'.base64_encode($normalized['binary']);
                 $item->update(['qr_code_path' => $qrPath]);
             }
         }
+
+        return [
+            'phone_number' => $parsed['phone_number'],
+            'iccid' => $parsed['iccid'],
+            'qr_code_data' => $parsed['qr_code_data'],
+            'qr_code_path' => $qrPath,
+            'qr_image_base64' => $qrImageBase64,
+            'source_file_path' => $sourcePath,
+        ];
+    }
+
+    /**
+     * Persist extracted data to local inventory (no Vodacom call).
+     *
+     * @param  array{
+     *   phone_number: string,
+     *   iccid?: string|null,
+     *   qr_code_data?: string|null,
+     *   qr_code_path?: string|null
+     * }  $extracted
+     * @return array{esim: Esim, created: bool}
+     */
+    public function persist(EsimImportBatch $batch, EsimImportItem $item, array $extracted): array
+    {
+        $phoneNumber = Esim::normalizeMsisdn((string) $extracted['phone_number']);
+        $iccid = isset($extracted['iccid']) && $extracted['iccid'] !== ''
+            ? strtoupper(trim((string) $extracted['iccid']))
+            : null;
+        $qrCodeData = $extracted['qr_code_data'] ?? null;
+        $qrPath = $extracted['qr_code_path'] ?? $item->qr_code_path;
 
         $existing = Esim::query()->where('msisdn', $phoneNumber)->first();
 
@@ -131,14 +133,14 @@ class EsimSingleImportService
             'qr_code_path' => $qrPath,
             'qr_code_data' => $qrCodeData,
             'sim_type' => $batchSimType,
-            'provider_status' => Esim::PROVIDER_STATUS_ACTIVE,
+            'provider_status' => Esim::PROVIDER_STATUS_PENDING,
             'description' => $importDescription,
         ], fn ($value) => $value !== null && $value !== '');
 
         if (! $existing) {
             $attributes['status'] = 'AVAILABLE';
             $attributes['sale_status'] = Esim::SALE_STATUS_AVAILABLE;
-            $attributes['network_id'] = 1;
+            $attributes['network_id'] = Esim::defaultNetworkId();
         } else {
             if ($qrPath && $existing->qr_code_path && $existing->qr_code_path !== $qrPath) {
                 Storage::disk('local')->delete($existing->qr_code_path);
@@ -163,6 +165,23 @@ class EsimSingleImportService
             'esim' => $esim->fresh(),
             'created' => $existing === null,
         ];
+    }
+
+    /**
+     * Legacy auto-import: parse file and save immediately (no Vodacom).
+     *
+     * @return array{esim: Esim, created: bool}
+     */
+    public function process(
+        EsimImportBatch $batch,
+        EsimImportItem $item,
+        UploadedFile $file,
+        ?string $phoneOverride = null,
+        ?string $iccidOverride = null,
+    ): array {
+        $extracted = $this->extract($batch, $item, $file, $phoneOverride, $iccidOverride);
+
+        return $this->persist($batch, $item, $extracted);
     }
 
     /**
@@ -244,6 +263,68 @@ class EsimSingleImportService
         }
 
         return null;
+    }
+
+    /**
+     * @return array{
+     *   phone_number: string,
+     *   iccid: string|null,
+     *   qr_code_data: string|null,
+     *   qr_binary: string|null
+     * }
+     */
+    private function parseUploadedFile(
+        UploadedFile $file,
+        ?string $phoneOverride,
+        ?string $iccidOverride,
+    ): array {
+        $mime = strtolower($file->getMimeType() ?? '');
+        $extension = strtolower($file->getClientOriginalExtension() ?: 'bin');
+        $isPdf = $extension === 'pdf' || str_contains($mime, 'pdf');
+
+        $text = '';
+        $qrBinary = null;
+        $qrCodeData = null;
+
+        if ($isPdf) {
+            $page = $this->loadSinglePdfPage($file);
+            $text = trim($page->getText());
+            $qrPayload = $this->pdfQrExtractor->extract($page, $file->getRealPath());
+            $qrBinary = $qrPayload['binary'];
+            $qrCodeData = $qrPayload['data'];
+        } else {
+            $qrBinary = file_get_contents($file->getRealPath()) ?: null;
+        }
+
+        $phoneNumber = $phoneOverride
+            ? Esim::normalizeMsisdn($phoneOverride)
+            : $this->extractPhoneNumber($text);
+
+        if ($qrBinary && $qrCodeData === null) {
+            $qrCodeData = $this->qrDecoder->decode($qrBinary);
+        }
+
+        if ($qrCodeData) {
+            if (! $phoneNumber) {
+                $phoneNumber = $this->extractPhoneNumber($qrCodeData) ?? $this->extractPhoneFromQrData($qrCodeData);
+            }
+            if (! $iccidOverride) {
+                $iccidOverride = $this->extractIccid($qrCodeData) ?? $iccidOverride;
+            }
+        }
+
+        if (! $phoneNumber) {
+            throw new \RuntimeException('Phone number not found.');
+        }
+
+        $iccid = $iccidOverride ?: $this->extractIccid($text);
+
+        return [
+            'phone_number' => $phoneNumber,
+            'iccid' => $iccid,
+            'qr_code_data' => $qrCodeData,
+            'qr_binary' => $qrBinary,
+        ];
     }
 
     private function extractPhoneFromQrData(string $qrData): ?string

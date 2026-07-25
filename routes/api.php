@@ -70,6 +70,7 @@ Route::prefix('esim')->middleware(['auth:sanctum', 'admin'])->group(function () 
   Route::get('/networks', [EsimController::class, 'networks']);
   Route::get('/products', [EsimController::class, 'products']);
   Route::get('/sims', [EsimController::class, 'sims']);
+  Route::post('/sims', [EsimController::class, 'storeSim']);
   Route::post('/sims/activate', [EsimController::class, 'activate']);
   Route::post('/sims/suspend', [EsimController::class, 'suspend']);
   Route::get('/usage', [EsimController::class, 'usage']);
@@ -142,7 +143,11 @@ Route::prefix('admin')->middleware(['auth:sanctum', 'admin'])->group(function ()
   Route::post('/esim-import-batches', [EsimImportBatchController::class, 'store']);
   Route::get('/esim-import-batches/{batch}', [EsimImportBatchController::class, 'show']);
   Route::post('/esim-import-batches/{batch}/items', [EsimImportBatchController::class, 'storeItem']);
+  Route::post('/esim-import-batches/{batch}/items/preview', [EsimImportBatchController::class, 'previewItem']);
   Route::post('/esim-import-batches/{batch}/finish', [EsimImportBatchController::class, 'finish']);
+  Route::post('/esim-import-items/{item}/confirm', [EsimImportItemController::class, 'confirm']);
+  Route::post('/esim-import-items/{item}/skip', [EsimImportItemController::class, 'skip']);
+  Route::post('/esim-import-items/{item}/retry-activation', [EsimImportItemController::class, 'retryActivation']);
   Route::post('/esim-import-items/{item}/retry', [EsimImportItemController::class, 'retry']);
 
   // Imported eSIM inventory (admin)

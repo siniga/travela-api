@@ -38,6 +38,10 @@ return [
         // Full origin only (e.g. https://simmanager.vodacom.co.tz) — paths include /api/...
         'base_url' => env('VODACOM_SIM_BASE_URL', env('ESIM_MANAGER_URL')),
         'api_key' => env('VODACOM_SIM_API_KEY', env('ESIM_MANAGER_KEY')),
+        // Vodacom network_id for POST /api/sims (from GET /api/networks)
+        'default_network_id' => (int) env('VODACOM_DEFAULT_NETWORK_ID', 1),
+        // After POST /api/sims, also call POST /api/sims-activate during import confirm
+        'auto_activate_on_import' => env('VODACOM_AUTO_ACTIVATE_ON_IMPORT', true),
         // Vodacom product_id (sim_bundle_id) => TZS airtime_amount string for /api/recharge
         'recharge_airtime_by_product_id' => array_filter([
             66 => env('VODACOM_RECHARGE_AIRTIME_66', '500'),

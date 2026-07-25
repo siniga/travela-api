@@ -144,6 +144,85 @@ class EsimImportBatchController extends Controller
         }
     }
 
+    /**
+     * Parse one page/image and return a preview without saving to inventory or Vodacom.
+     */
+    public function previewItem(Request $request, EsimImportBatch $batch): JsonResponse
+    {
+        if (in_array($batch->status, [EsimImportBatch::STATUS_COMPLETED, EsimImportBatch::STATUS_CANCELLED], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This import batch is no longer accepting items.',
+            ], 422);
+        }
+
+        $validated = $request->validate([
+            'file' => ['required', 'file', 'mimes:pdf,png,jpg,jpeg', 'max:5120'],
+            'page_number' => ['nullable', 'integer', 'min:1'],
+            'phone_number' => ['nullable', 'string', 'max:30'],
+            'iccid' => ['nullable', 'string', 'max:50'],
+        ]);
+
+        $item = EsimImportItem::query()->create([
+            'esim_import_batch_id' => $batch->id,
+            'page_number' => $validated['page_number'] ?? null,
+            'status' => EsimImportItem::STATUS_PROCESSING,
+        ]);
+
+        try {
+            $extracted = $this->importService->extract(
+                $batch,
+                $item,
+                $validated['file'],
+                $validated['phone_number'] ?? null,
+                $validated['iccid'] ?? null,
+            );
+
+            $item->update([
+                'status' => EsimImportItem::STATUS_PENDING,
+                'phone_number' => $extracted['phone_number'],
+                'iccid' => $extracted['iccid'],
+                'error_message' => null,
+            ]);
+
+            $batch->markProcessing();
+
+            return response()->json([
+                'success' => true,
+                'preview' => [
+                    'phone_number' => $extracted['phone_number'],
+                    'iccid' => $extracted['iccid'],
+                    'qr_code_data' => $extracted['qr_code_data'],
+                    'qr_image_base64' => $extracted['qr_image_base64'],
+                    'network_id' => Esim::defaultNetworkId(),
+                ],
+                'item' => $item->fresh()->toResponseArray(),
+                'batch' => $batch->fresh()->toSummaryArray(),
+            ], 201);
+        } catch (\Throwable $e) {
+            Log::warning('eSIM batch item preview failed', [
+                'batch_id' => $batch->id,
+                'item_id' => $item->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            $item->update([
+                'status' => EsimImportItem::STATUS_FAILED,
+                'error_message' => $e->getMessage(),
+            ]);
+
+            $batch->recordItemFailure();
+            $batch->refresh();
+
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'item' => $item->fresh()->toResponseArray(),
+                'batch' => $batch->toSummaryArray(),
+            ], 422);
+        }
+    }
+
     public function finish(EsimImportBatch $batch): JsonResponse
     {
         $batch->refresh();

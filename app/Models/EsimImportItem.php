@@ -15,6 +15,8 @@ class EsimImportItem extends Model
 
     public const STATUS_FAILED = 'failed';
 
+    public const STATUS_SKIPPED = 'skipped';
+
     protected $fillable = [
         'esim_import_batch_id',
         'esim_id',

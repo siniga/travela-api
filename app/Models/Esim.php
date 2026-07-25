@@ -12,6 +12,8 @@ class Esim extends Model
 
     public const SIM_TYPE_PHYSICAL = 'physical';
 
+    public const PROVIDER_STATUS_PENDING = 'pending';
+
     public const PROVIDER_STATUS_ACTIVE = 'active';
 
     public const PROVIDER_STATUS_SUSPENDED = 'suspended';
@@ -98,6 +100,18 @@ class Esim extends Model
     public static function normalizeMsisdn(string $msisdn): string
     {
         return ltrim(preg_replace('/\s+/', '', trim($msisdn)), '+');
+    }
+
+    public static function toVodacomMsisdn(string $msisdn): string
+    {
+        $normalized = self::normalizeMsisdn($msisdn);
+
+        return str_starts_with($normalized, '+') ? $normalized : '+'.$normalized;
+    }
+
+    public static function defaultNetworkId(): int
+    {
+        return (int) config('services.vodacom_sim.default_network_id', 1);
     }
 
     public static function findByMsisdn(string $msisdn): ?self
