@@ -9,8 +9,7 @@ use App\Models\Esim;
  *
  * Expected shape:
  * {
- *   "airtime_amount": "100.25",
- *   "msisdn": "+25583479408",
+ *   "msisdn": "25583479408",
  *   "network_id": 1,
  *   "product_id": 66,
  *   "reference": "RECHARGE123"
@@ -51,9 +50,7 @@ class VodacomRechargePayload
 
     public static function formatMsisdn(string $msisdn): string
     {
-        $digits = Esim::normalizeMsisdn($msisdn);
-
-        return '+'.$digits;
+        return Esim::normalizeMsisdn($msisdn);
     }
 
     public static function formatAirtimeAmount(mixed $value): string

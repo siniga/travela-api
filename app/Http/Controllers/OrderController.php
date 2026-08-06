@@ -215,7 +215,7 @@ class OrderController extends Controller
 
             $assignResult = null;
             if ($paymentStatus === 'paid') {
-                $assignResult = $this->simAssignment->assignForPaidOrder($order);
+                $assignResult = $this->simAssignment->fulfillPaidOrder($order);
             }
 
             return response()->json([

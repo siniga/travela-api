@@ -10,6 +10,54 @@ class VodacomBalanceService
 {
     private const BALANCE_KEYS = ['AIRTIME', 'DATA', 'SMS'];
 
+    public function __construct(
+        private readonly VodacomSimManagerService $vodacom,
+    ) {
+    }
+
+    /**
+     * Trigger Vodacom sims-balances (sync immediately or queue callback).
+     *
+     * @return array{status: string, http_status?: int, synced?: list<array{esim_id: int, assignment_updated: bool}>}
+     */
+    public function requestBalancesForMsisdn(string $msisdn): array
+    {
+        $normalized = Esim::normalizeMsisdn($msisdn);
+        $query = ['msisdn' => $normalized];
+
+        Log::info('Vodacom sims-balances request (post-recharge)', ['msisdn' => $normalized]);
+
+        $response = $this->vodacom->get('/api/sims-balances', $query);
+        $httpStatus = $response->status();
+
+        if ($httpStatus === 202) {
+            Log::info('Vodacom sims-balances queued for callback', [
+                'msisdn' => $normalized,
+                'body' => mb_substr((string) $response->body(), 0, 2000),
+            ]);
+
+            return ['status' => 'queued', 'http_status' => $httpStatus];
+        }
+
+        if ($response->successful()) {
+            $synced = $this->syncFromVodacomPayload($response->json());
+            Log::info('Vodacom sims-balances synced after recharge', [
+                'msisdn' => $normalized,
+                'synced' => $synced,
+            ]);
+
+            return ['status' => 'synced', 'http_status' => $httpStatus, 'synced' => $synced];
+        }
+
+        Log::warning('Vodacom sims-balances request failed after recharge', [
+            'msisdn' => $normalized,
+            'http_status' => $httpStatus,
+            'body' => mb_substr((string) $response->body(), 0, 2000),
+        ]);
+
+        return ['status' => 'failed', 'http_status' => $httpStatus];
+    }
+
     /**
      * @param  array<string, mixed>  $raw
      * @return array{AIRTIME: float|null, DATA: float|null, SMS: float|null}

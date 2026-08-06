@@ -6,6 +6,7 @@ use App\Models\Esim;
 use App\Models\Order;
 use App\Models\User;
 use App\Models\UserEsim;
+use App\Support\OrderCheckout;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
@@ -32,6 +33,86 @@ class SimAssignmentService
         return in_array($simType, [Esim::SIM_TYPE_ESIM, Esim::SIM_TYPE_PHYSICAL], true)
             ? $simType
             : null;
+    }
+
+    /**
+     * After payment: assign inventory for new purchases, or recharge only for dashboard top-ups.
+     *
+     * @param  array{payment_id?: string|null, transaction_reference?: string|null}|null  $evpayContext
+     * @return array{
+     *     assigned: bool,
+     *     sim_type: ?string,
+     *     reason: string,
+     *     assignment?: UserEsim,
+     *     recharge?: array<string, mixed>|null
+     * }
+     */
+    public function fulfillPaidOrder(Order $order, ?array $evpayContext = null): array
+    {
+        if (OrderCheckout::isTopUpOrder($order)) {
+            return $this->fulfillTopUpPaidOrder($order, $evpayContext);
+        }
+
+        $result = $this->assignForPaidOrder($order);
+
+        if (($result['sim_type'] ?? null) === Esim::SIM_TYPE_ESIM && $this->orderIsPaid($order)) {
+            $result['recharge'] = $this->rechargeOrderSafely($order->fresh(), $evpayContext);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Dashboard top-up: use the customer's existing SIM, skip inventory assignment.
+     *
+     * @param  array{payment_id?: string|null, transaction_reference?: string|null}|null  $evpayContext
+     * @return array{
+     *     assigned: bool,
+     *     sim_type: ?string,
+     *     reason: string,
+     *     assignment?: UserEsim,
+     *     recharge?: array<string, mixed>|null
+     * }
+     */
+    public function fulfillTopUpPaidOrder(Order $order, ?array $evpayContext = null): array
+    {
+        $order->refresh();
+
+        if (! $this->orderIsPaid($order)) {
+            return [
+                'assigned' => false,
+                'sim_type' => Esim::SIM_TYPE_ESIM,
+                'reason' => 'payment_not_paid',
+            ];
+        }
+
+        $assignment = $this->resolveTopUpAssignment($order);
+        if (! $assignment?->esim) {
+            Log::warning('Top-up fulfillment failed: no assigned SIM for user', [
+                'order_id' => $order->id,
+                'user_id' => $order->user_id,
+            ]);
+
+            return [
+                'assigned' => false,
+                'sim_type' => Esim::SIM_TYPE_ESIM,
+                'reason' => 'no_esim',
+            ];
+        }
+
+        $assignment = $this->esimOrderLink->linkAssignmentToOrder($assignment, $order)
+            ->load(['esim', 'bundle', 'order', 'orderItem']);
+        $this->updateOrderSimMetadata($order, $assignment);
+
+        $recharge = $this->rechargeOrderSafely($order, $evpayContext);
+
+        return [
+            'assigned' => true,
+            'sim_type' => Esim::SIM_TYPE_ESIM,
+            'reason' => 'existing_sim',
+            'assignment' => $assignment,
+            'recharge' => $recharge,
+        ];
     }
 
     /**
@@ -100,14 +181,11 @@ class SimAssignmentService
             ];
         }
 
-        $recharge = $this->rechargeOrderSafely($order);
-
         return [
             'assigned' => true,
             'sim_type' => Esim::SIM_TYPE_ESIM,
             'reason' => 'assigned',
             'assignment' => $assignment,
-            'recharge' => $recharge,
         ];
     }
 
@@ -338,12 +416,13 @@ class SimAssignmentService
     }
 
     /**
+     * @param  array{payment_id?: string|null, transaction_reference?: string|null}|null  $evpayContext
      * @return array<string, mixed>|null
      */
-    private function rechargeOrderSafely(Order $order): ?array
+    private function rechargeOrderSafely(Order $order, ?array $evpayContext = null): ?array
     {
         try {
-            return $this->orderRecharge->rechargePaidOrder($order->fresh());
+            return $this->orderRecharge->rechargePaidOrder($order->fresh(), $evpayContext);
         } catch (\Throwable $e) {
             Log::error('Order recharge failed after SIM assignment', [
                 'order_id' => $order->id,
@@ -359,6 +438,58 @@ class SimAssignmentService
                 'recharge_status' => 'failed',
             ];
         }
+    }
+
+    private function resolveTopUpAssignment(Order $order): ?UserEsim
+    {
+        if (! $order->user_id) {
+            return null;
+        }
+
+        $meta = $this->orderMetadata($order);
+
+        if (! empty($meta['user_esim_id'])) {
+            $assignment = UserEsim::query()
+                ->where('id', $meta['user_esim_id'])
+                ->where('user_id', $order->user_id)
+                ->with('esim')
+                ->first();
+            if ($assignment?->esim) {
+                return $assignment;
+            }
+        }
+
+        if (! empty($meta['esim_id'])) {
+            $assignment = UserEsim::query()
+                ->where('user_id', $order->user_id)
+                ->where('esim_id', $meta['esim_id'])
+                ->with('esim')
+                ->first();
+            if ($assignment?->esim) {
+                return $assignment;
+            }
+        }
+
+        if (! empty($meta['msisdn']) && is_string($meta['msisdn'])) {
+            $esim = Esim::findByMsisdn($meta['msisdn']);
+            if ($esim) {
+                $assignment = UserEsim::query()
+                    ->where('user_id', $order->user_id)
+                    ->where('esim_id', $esim->id)
+                    ->with('esim')
+                    ->first();
+                if ($assignment) {
+                    return $assignment;
+                }
+            }
+        }
+
+        return UserEsim::query()
+            ->where('user_id', $order->user_id)
+            ->with('esim')
+            ->whereHas('esim', fn ($q) => $q->whereNotNull('msisdn')->where('msisdn', '!=', ''))
+            ->orderBy('id')
+            ->first();
     }
 
     /**

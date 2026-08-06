@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Models\UserEsim;
 use App\Services\EvPayService;
 use App\Services\OrderRechargeService;
+use App\Services\VodacomBalanceService;
 use App\Services\VodacomSimManagerService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
@@ -28,15 +29,16 @@ class OrderRechargeTest extends TestCase
     {
         [$order, $item] = $this->createPaidOrderFixture();
 
+        $this->mockBalanceRefresh();
         $this->mock(VodacomSimManagerService::class, function ($mock) {
             $mock->shouldReceive('post')
                 ->once()
                 ->with('/api/recharge', [], \Mockery::on(function (array $payload) {
-                    return $payload['msisdn'] === '+255797053059'
+                    return $payload['msisdn'] === '255797053059'
                         && $payload['network_id'] === 1
                         && $payload['product_id'] === 66
                         && str_starts_with($payload['reference'], 'RECHARGE')
-                        && ($payload['airtime_amount'] ?? null) === '500.00';
+                        && ! array_key_exists('airtime_amount', $payload);
                 }), \Mockery::any())
                 ->andReturn(Http::response([
                     'status' => 'SUCCESS',
@@ -90,6 +92,7 @@ class OrderRechargeTest extends TestCase
         $order->status = 'pending_payment';
         $order->save();
 
+        $this->mockBalanceRefresh();
         $this->mock(VodacomSimManagerService::class, function ($mock) {
             $mock->shouldReceive('post')
                 ->once()
@@ -148,6 +151,7 @@ class OrderRechargeTest extends TestCase
         $order->metadata = ['msisdn' => '255798092059'];
         $order->save();
 
+        $this->mockBalanceRefresh();
         $this->mock(VodacomSimManagerService::class, function ($mock) {
             $mock->shouldReceive('post')
                 ->once()
@@ -262,5 +266,14 @@ class OrderRechargeTest extends TestCase
         $order->load('orderItems.bundle');
 
         return [$order, $item];
+    }
+
+    private function mockBalanceRefresh(): void
+    {
+        $this->mock(VodacomBalanceService::class, function ($mock) {
+            $mock->shouldReceive('requestBalancesForMsisdn')
+                ->zeroOrMoreTimes()
+                ->andReturn(['status' => 'queued', 'http_status' => 202]);
+        });
     }
 }

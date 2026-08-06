@@ -84,6 +84,7 @@ Route::prefix('me')->middleware('auth:sanctum')->group(function () {
   Route::get('/orders', [OrderController::class, 'myOrders']);
   Route::get('/orders/search', [OrderController::class, 'searchByOrderNumber']);
   Route::get('/esims', [UserEsimController::class, 'index']);
+  Route::get('/esims/balance-status', [UserEsimController::class, 'balanceStatus']);
   Route::get('/esims/{userEsim}/activation', [UserEsimController::class, 'activation'])->whereNumber('userEsim');
   Route::post('/esims/{userEsim}/device-activated', [UserEsimController::class, 'markDeviceActivated'])->whereNumber('userEsim');
   Route::get('/esims/assignment-status', [UserEsimController::class, 'assignmentStatus']);

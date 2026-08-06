@@ -3,7 +3,10 @@
 namespace App\Http\Requests;
 
 use App\Models\Esim;
+use App\Models\UserEsim;
+use App\Support\OrderCheckout;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
 class StoreOrderRequest extends FormRequest
@@ -27,10 +30,10 @@ class StoreOrderRequest extends FormRequest
             'esim_id' => ['nullable', 'integer', 'exists:esims,id'],
             'user_esim_id' => ['nullable', 'integer', 'exists:user_esims,id'],
 
-            'trip.destination_country' => ['required', 'string', 'max:80'],
-            'trip.arrival_date' => ['required', 'date'],
-            'trip.departure_date' => ['required', 'date', 'after:trip.arrival_date'],
-            'trip.duration_days' => ['required', 'integer', 'min:1'],
+            'trip.destination_country' => [Rule::requiredIf(fn () => ! $this->isTopUpRequest()), 'nullable', 'string', 'max:80'],
+            'trip.arrival_date' => [Rule::requiredIf(fn () => ! $this->isTopUpRequest()), 'nullable', 'date'],
+            'trip.departure_date' => [Rule::requiredIf(fn () => ! $this->isTopUpRequest()), 'nullable', 'date', 'after:trip.arrival_date'],
+            'trip.duration_days' => [Rule::requiredIf(fn () => ! $this->isTopUpRequest()), 'nullable', 'integer', 'min:1'],
 
             'items' => ['required', 'array', 'min:1'],
             'items.*.type' => ['required', 'in:bundle,service'],
@@ -47,11 +50,11 @@ class StoreOrderRequest extends FormRequest
             'pricing.total_amount' => ['required', 'numeric', 'min:0'],
             'pricing.currency' => ['required', 'string', 'size:3'],
 
-            'kyc.passport_id' => ['required', 'string', 'max:50'],
-            'kyc.passport_country' => ['required', 'string', 'max:10'],
-            'kyc.nationality' => ['required', 'string', 'max:80'],
-            'kyc.gender' => ['required', 'string', 'in:Male,Female,Other'],
-            'kyc.reason_for_travel' => ['required', 'string', 'max:120'],
+            'kyc.passport_id' => [Rule::requiredIf(fn () => ! $this->isTopUpRequest()), 'nullable', 'string', 'max:50'],
+            'kyc.passport_country' => [Rule::requiredIf(fn () => ! $this->isTopUpRequest()), 'nullable', 'string', 'max:10'],
+            'kyc.nationality' => [Rule::requiredIf(fn () => ! $this->isTopUpRequest()), 'nullable', 'string', 'max:80'],
+            'kyc.gender' => [Rule::requiredIf(fn () => ! $this->isTopUpRequest()), 'nullable', 'string', 'in:Male,Female,Other'],
+            'kyc.reason_for_travel' => [Rule::requiredIf(fn () => ! $this->isTopUpRequest()), 'nullable', 'string', 'max:120'],
 
             'payment' => ['nullable', 'array'],
             'payment.status' => ['nullable', 'string', 'in:paid,pending'],
@@ -84,11 +87,100 @@ class StoreOrderRequest extends FormRequest
             $trip['destination_country'] = strtoupper($trip['destination_country']);
             $this->merge(['trip' => $trip]);
         }
+
+        if (! $this->isTopUpRequest() || ! $this->user()) {
+            return;
+        }
+
+        $user = $this->user();
+        $this->merge(['user_id' => $user->id, 'simType' => Esim::SIM_TYPE_ESIM]);
+
+        $kyc = $user->kyc;
+        if ($kyc) {
+            $this->merge([
+                'kyc' => [
+                    'passport_id' => $kyc->passport_id,
+                    'passport_country' => $kyc->passport_country,
+                    'nationality' => $kyc->nationality,
+                    'gender' => $kyc->gender,
+                    'reason_for_travel' => $kyc->reason ?? 'Tourism',
+                ],
+            ]);
+        }
+
+        $arrival = $kyc?->arrival_date?->format('Y-m-d') ?? now()->format('Y-m-d');
+        $departure = $kyc?->departure_date?->format('Y-m-d') ?? now()->addDay()->format('Y-m-d');
+        $durationDays = max(1, (int) round((strtotime($departure.' 00:00:00') - strtotime($arrival.' 00:00:00')) / 86400));
+
+        $this->merge([
+            'trip' => [
+                'destination_country' => strtoupper((string) ($this->input('country') ?: 'TZ')),
+                'arrival_date' => $arrival,
+                'departure_date' => $departure,
+                'duration_days' => $durationDays,
+            ],
+        ]);
+
+        if ($this->filled('user_esim_id')) {
+            $assignment = UserEsim::query()
+                ->where('user_id', $user->id)
+                ->with('esim')
+                ->find($this->input('user_esim_id'));
+
+            if ($assignment?->esim) {
+                $this->merge([
+                    'msisdn' => $assignment->esim->msisdn,
+                    'esim_id' => $assignment->esim_id,
+                ]);
+            }
+        }
+    }
+
+    public function isTopUpRequest(): bool
+    {
+        return OrderCheckout::isTopUp([
+            'checkoutMode' => $this->input('checkoutMode'),
+        ]);
     }
 
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator) {
+            if ($this->isTopUpRequest()) {
+                $user = $this->user();
+                if (! $user) {
+                    $validator->errors()->add('checkoutMode', 'You must be logged in to purchase a top-up.');
+
+                    return;
+                }
+
+                if (! $user->kyc) {
+                    $validator->errors()->add('kyc', 'Complete KYC before purchasing a data top-up.');
+                }
+
+                if (! $this->filled('user_esim_id') && ! $this->filled('msisdn')) {
+                    $validator->errors()->add('user_esim_id', 'Select the SIM to top up.');
+                }
+
+                if ($this->filled('user_esim_id')) {
+                    $owned = UserEsim::query()
+                        ->where('user_id', $user->id)
+                        ->whereKey($this->input('user_esim_id'))
+                        ->whereHas('esim', fn ($q) => $q->whereNotNull('msisdn')->where('msisdn', '!=', ''))
+                        ->exists();
+
+                    if (! $owned) {
+                        $validator->errors()->add('user_esim_id', 'The selected SIM is not assigned to your account.');
+                    }
+                }
+
+                if ($this->input('simType') && $this->input('simType') !== Esim::SIM_TYPE_ESIM) {
+                    $validator->errors()->add('simType', 'Top-up orders must use an existing eSIM.');
+                }
+
+                return;
+            }
+
             $simType = $this->input('simType');
             if (! $simType) {
                 return;

@@ -19,6 +19,7 @@ class OrderRechargeService
     public function __construct(
         private readonly VodacomSimManagerService $vodacom,
         private readonly UserEsimOrderLinkService $esimOrderLink,
+        private readonly VodacomBalanceService $balances,
     ) {
     }
 
@@ -263,11 +264,39 @@ class OrderRechargeService
             }
         }
 
+        if ($result['processed'] > 0 && $esim->msisdn) {
+            $this->requestBalanceRefreshAfterRecharge($order, $esim);
+        }
+
         $rechargeStatus = $this->deriveOrderRechargeStatus($order, $result);
         $this->recordFulfillmentSummary($order, $result, $rechargeStatus, $paymentId, $transactionRef, $assignment->id);
         $result['recharge_status'] = $rechargeStatus;
 
         return $result;
+    }
+
+    private function requestBalanceRefreshAfterRecharge(Order $order, Esim $esim): void
+    {
+        try {
+            $balanceResult = $this->balances->requestBalancesForMsisdn($esim->msisdn);
+            $meta = $this->orderMetadata($order);
+            $meta['balance_poll_started_at'] = now()->toIso8601String();
+            $meta['balance_request_status'] = $balanceResult['status'] ?? null;
+            $order->metadata = $meta;
+            $order->save();
+
+            Log::info('Balance refresh requested after recharge', [
+                'order_id' => $order->id,
+                'msisdn' => $esim->msisdn,
+                'balance_request_status' => $balanceResult['status'] ?? null,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Balance refresh after recharge failed', [
+                'order_id' => $order->id,
+                'msisdn' => $esim->msisdn,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     private function orderIsPaid(Order $order): bool
@@ -667,18 +696,12 @@ class OrderRechargeService
         OrderItem $item,
         Order $order,
         string $reference,
-    ): ?array {
-        $airtime = $this->resolveAirtimeAmount($item, $bundle, $order);
-        if ($airtime === null) {
-            return null;
-        }
-
+    ): array {
         return VodacomRechargePayload::normalize([
             'msisdn' => $esim->msisdn,
             'network_id' => (int) $esim->network_id,
             'product_id' => (int) $bundle->sim_bundle_id,
             'reference' => $reference,
-            'airtime_amount' => $airtime,
         ]);
     }
 
@@ -693,7 +716,8 @@ class OrderRechargeService
 
         $errors = [];
 
-        if (empty($payload['msisdn']) || ! is_string($payload['msisdn']) || ! str_starts_with($payload['msisdn'], '+')) {
+        $msisdn = is_string($payload['msisdn'] ?? null) ? $payload['msisdn'] : '';
+        if ($msisdn === '' || ! preg_match('/^\d{9,15}$/', $msisdn)) {
             $errors[] = 'msisdn';
         }
 
@@ -707,10 +731,6 @@ class OrderRechargeService
 
         if (empty($payload['reference']) || ! is_string($payload['reference'])) {
             $errors[] = 'reference';
-        }
-
-        if (! isset($payload['airtime_amount']) || ! is_numeric($payload['airtime_amount'])) {
-            $errors[] = 'airtime_amount';
         }
 
         return $errors;

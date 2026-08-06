@@ -10,8 +10,10 @@ use App\Models\UserEsim;
 use App\Services\OrderRechargeService;
 use App\Services\SimAssignmentService;
 use App\Services\UserEsimOrderLinkService;
+use App\Services\VodacomBalanceService;
 use App\Services\VodacomRechargePayload;
 use App\Services\VodacomSimManagerService;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -23,6 +25,7 @@ class UserEsimController extends Controller
         private readonly OrderRechargeService $orderRecharge,
         private readonly UserEsimOrderLinkService $esimOrderLink,
         private readonly SimAssignmentService $simAssignment,
+        private readonly VodacomBalanceService $balances,
     ) {
     }
 
@@ -135,6 +138,62 @@ class UserEsimController extends Controller
                 : 'eSIM marked as activated on your device.',
             'data' => $userEsim->toAssignmentArray(),
         ], $alreadyActivated ? 200 : 201);
+    }
+
+    /**
+     * Poll-friendly status after top-up/recharge: has an updated balance arrived since `since`?
+     */
+    public function balanceStatus(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'since' => ['required', 'date'],
+            'msisdn' => ['nullable', 'string'],
+        ]);
+
+        $since = Carbon::parse($data['since']);
+        $msisdnFilter = isset($data['msisdn']) && $data['msisdn'] !== ''
+            ? Esim::normalizeMsisdn($data['msisdn'])
+            : null;
+
+        $assignments = $request->user()
+            ->esims()
+            ->with('esim')
+            ->get();
+
+        foreach ($assignments as $assignment) {
+            $esim = $assignment->esim;
+            if (! $esim?->msisdn) {
+                continue;
+            }
+
+            $normalized = Esim::normalizeMsisdn($esim->msisdn);
+            if ($msisdnFilter && $normalized !== $msisdnFilter) {
+                continue;
+            }
+
+            $fetchedAt = $assignment->balance_fetched_at ?? $esim->balance_fetched_at;
+            $balances = $assignment->balances ?? $esim->balances;
+
+            if ($this->balanceIsFresh($fetchedAt, $since, $balances)) {
+                $assignment = $this->esimOrderLink->ensureAssignmentLinked($assignment);
+                $assignment->loadMissing(['esim', 'bundle', 'order', 'orderItem']);
+
+                return response()->json([
+                    'success' => true,
+                    'balance_ready' => true,
+                    'poll_again' => false,
+                    'data' => $assignment->toAssignmentArray(),
+                ]);
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'balance_ready' => false,
+            'poll_again' => true,
+            'retry_after_seconds' => 5,
+            'data' => null,
+        ]);
     }
 
     /**
@@ -463,6 +522,23 @@ class UserEsimController extends Controller
 
         return response($body, $vodacomResponse->status())
             ->header('Content-Type', $contentType ?: 'application/json');
+    }
+
+    /**
+     * @param  mixed  $balances
+     */
+    private function balanceIsFresh(?Carbon $fetchedAt, Carbon $since, $balances): bool
+    {
+        if (! $fetchedAt || ! $fetchedAt->gt($since)) {
+            return false;
+        }
+
+        if (! is_array($balances)) {
+            return false;
+        }
+
+        return ($balances['DATA'] ?? null) !== null
+            || ($balances['AIRTIME'] ?? null) !== null;
     }
 }
 

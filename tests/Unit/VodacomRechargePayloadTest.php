@@ -12,7 +12,6 @@ class VodacomRechargePayloadTest extends TestCase
         config(['services.vodacom_sim.recharge_reference_prefix' => 'RECHARGE']);
 
         $payload = VodacomRechargePayload::normalize([
-            'airtime_amount' => '100.25',
             'msisdn' => '25583479408',
             'network_id' => 1,
             'product_id' => 66,
@@ -20,27 +19,38 @@ class VodacomRechargePayloadTest extends TestCase
         ]);
 
         $this->assertSame([
-            'airtime_amount' => '100.25',
-            'msisdn' => '+25583479408',
+            'msisdn' => '25583479408',
             'network_id' => 1,
             'product_id' => 66,
             'reference' => 'RECHARGE123',
         ], $payload);
     }
 
-    public function test_normalize_formats_integer_airtime_as_decimal_string(): void
+    public function test_normalize_strips_plus_from_msisdn(): void
     {
         $payload = VodacomRechargePayload::normalize([
             'msisdn' => '+255768632087',
             'network_id' => 1,
             'product_id' => 66,
             'reference' => 'RECHARGE153335',
+        ]);
+
+        $this->assertSame('255768632087', $payload['msisdn']);
+        $this->assertSame('RECHARGE153335', $payload['reference']);
+        $this->assertArrayNotHasKey('airtime_amount', $payload);
+    }
+
+    public function test_normalize_includes_airtime_when_provided(): void
+    {
+        $payload = VodacomRechargePayload::normalize([
+            'msisdn' => '255768632087',
+            'network_id' => 1,
+            'product_id' => 66,
+            'reference' => 'RECHARGE153335',
             'airtime_amount' => 500,
         ]);
 
-        $this->assertSame('+255768632087', $payload['msisdn']);
         $this->assertSame('500.00', $payload['airtime_amount']);
-        $this->assertSame('RECHARGE153335', $payload['reference']);
     }
 
     public function test_generate_reference_is_stable_for_same_order_item(): void
