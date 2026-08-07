@@ -8,6 +8,7 @@ use App\Models\Country;
 use App\Models\CountryProvider;
 use App\Models\Bundle;
 use App\Models\BundleType;
+use App\Support\BundleVisibility;
 use Illuminate\Http\Request;
 
 class ProviderController extends Controller
@@ -54,7 +55,10 @@ class ProviderController extends Controller
         $q->where('price_usd', '<=', $max);
     }
 
-    $bundles = $q->orderBy('price_usd')->get()->map(function ($b) {
+    $user = BundleVisibility::resolveOptionalUser($r);
+    $rows = BundleVisibility::filterBundles($q->orderBy('price_usd')->get(), $user);
+
+    $bundles = collect($rows)->map(function ($b) {
         return [
             'id'            => $b->id,
             'name'          => $b->name,
