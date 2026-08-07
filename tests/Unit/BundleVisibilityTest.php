@@ -9,7 +9,7 @@ use PHPUnit\Framework\TestCase;
 
 class BundleVisibilityTest extends TestCase
 {
-    public function test_admin_only_starter_25mb_free_bundle(): void
+    public function test_free_starter_alias_is_admin_only(): void
     {
         $bundle = new Bundle([
             'alias' => 'Starter',
@@ -27,7 +27,7 @@ class BundleVisibilityTest extends TestCase
         $this->assertTrue(BundleVisibility::visibleTo($admin, $bundle));
     }
 
-    public function test_public_paid_bundle_stays_visible(): void
+    public function test_paid_starter_is_public(): void
     {
         $bundle = new Bundle([
             'alias' => 'Starter',

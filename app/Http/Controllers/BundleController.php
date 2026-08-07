@@ -39,7 +39,7 @@ class BundleController extends Controller
 
         return response()->json([
             'bundles' => $bundles,
-        ]);
+        ])->header('Cache-Control', 'no-store, private');
     }
 }
 

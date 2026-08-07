@@ -78,7 +78,7 @@ class ProviderController extends Controller
         'country'  => ['name' => $country->name, 'iso2' => $country->iso2],
         'provider' => ['id' => $provider->id, 'name' => $provider->name, 'slug' => $provider->slug],
         'bundles'  => $bundles
-    ]);
+    ])->header('Cache-Control', 'no-store, private');
 }
 }
 
