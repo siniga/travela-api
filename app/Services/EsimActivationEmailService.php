@@ -48,7 +48,7 @@ class EsimActivationEmailService
                 msisdn: $esim->msisdn,
                 iccid: $esim->iccid,
                 orderReference: $orderReference,
-                dashboardUrl: rtrim((string) config('app.frontend_url', 'https://thetravela.com'), '/').'/dashboard',
+                dashboardUrl: $this->customerDashboardUrl(),
             ));
         } catch (Throwable $e) {
             Log::error('Failed to send eSIM activation welcome email', [
@@ -71,5 +71,16 @@ class EsimActivationEmailService
         $trimmed = trim((string) $name);
 
         return $trimmed !== '' ? $trimmed : 'Traveller';
+    }
+
+    private function customerDashboardUrl(): string
+    {
+        $base = rtrim((string) config('app.frontend_url', 'https://thetravela.com'), '/');
+
+        if ($base === '' || str_contains($base, 'localhost') || str_contains($base, '127.0.0.1')) {
+            $base = 'https://thetravela.com';
+        }
+
+        return $base.'/dashboard';
     }
 }

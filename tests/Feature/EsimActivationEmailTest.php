@@ -83,7 +83,7 @@ class EsimActivationEmailTest extends TestCase
             return $mail->hasTo($user->email)
                 && $mail->msisdn === '255793045401'
                 && $mail->iccid === '8925500000000000101'
-                && str_contains($mail->dashboardUrl, '/dashboard');
+                && $mail->dashboardUrl === 'https://thetravela.com/dashboard';
         });
 
         Mail::assertSentCount(1);

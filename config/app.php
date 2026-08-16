@@ -56,6 +56,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Frontend URL
+    |--------------------------------------------------------------------------
+    |
+    | Public website origin used in customer emails (dashboard, set-password).
+    | Do not fall back to APP_URL — that is the API and is often localhost.
+    |
+    */
+
+    'frontend_url' => env('FRONTEND_URL') ?: 'https://thetravela.com',
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |
