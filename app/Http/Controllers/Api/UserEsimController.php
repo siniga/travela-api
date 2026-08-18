@@ -171,8 +171,8 @@ class UserEsimController extends Controller
                 continue;
             }
 
-            $fetchedAt = $assignment->balance_fetched_at ?? $esim->balance_fetched_at;
-            $balances = $assignment->balances ?? $esim->balances;
+            $fetchedAt = $assignment->balance_fetched_at;
+            $balances = is_array($assignment->balances) ? $assignment->balances : null;
 
             if ($this->balanceIsFresh($fetchedAt, $since, $balances)) {
                 $assignment = $this->esimOrderLink->ensureAssignmentLinked($assignment);
@@ -550,8 +550,9 @@ class UserEsimController extends Controller
             return false;
         }
 
-        return ($balances['DATA'] ?? null) !== null
-            || ($balances['AIRTIME'] ?? null) !== null;
+        $data = $balances['DATA'] ?? $balances['data'] ?? null;
+
+        return $data !== null && $data !== '';
     }
 }
 
