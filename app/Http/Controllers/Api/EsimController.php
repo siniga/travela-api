@@ -145,12 +145,22 @@ class EsimController extends Controller
             $request->only(['airtime_amount', 'msisdn', 'network_id', 'reference', 'product_id'])
         );
 
-        return $this->proxy($this->vodacom->post('/api/recharge', [], $payload));
+        $response = $this->vodacom->post('/api/recharge', [], $payload);
+
+        if ($response->successful() && ! empty($payload['msisdn'])) {
+            $this->requestBalancesAfterRecharge((string) $payload['msisdn']);
+        }
+
+        return $this->proxy($response);
     }
 
     public function simsBalances(Request $request)
     {
         $query = array_filter($request->only(['msisdn', 'iccid', 'imsi']), fn ($v) => ! is_null($v) && $v !== '');
+
+        if (isset($query['msisdn'])) {
+            $query['msisdn'] = Esim::toVodacomMsisdn((string) $query['msisdn']);
+        }
 
         Log::info('Vodacom sims-balances request', [
             'query' => $query,
@@ -334,6 +344,18 @@ class EsimController extends Controller
             'body' => $request->all(),
             'raw_content' => mb_substr((string) $request->getContent(), 0, 8000),
         ];
+    }
+
+    private function requestBalancesAfterRecharge(string $msisdn): void
+    {
+        try {
+            $this->balances->requestBalancesForMsisdn($msisdn);
+        } catch (\Throwable $e) {
+            Log::warning('Balance refresh after recharge failed', [
+                'msisdn' => $msisdn,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     private function proxy($vodacomResponse)

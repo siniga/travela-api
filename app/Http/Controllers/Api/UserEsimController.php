@@ -401,9 +401,22 @@ class UserEsimController extends Controller
             return response()->json(['message' => 'You do not have access to this eSIM.'], 403);
         }
 
-        return $this->proxy($this->postVodacomRecharge(
+        $response = $this->postVodacomRecharge(
             $request->only(['airtime_amount', 'msisdn', 'network_id', 'reference', 'product_id'])
-        ));
+        );
+
+        if ($response->successful() && ! empty($data['msisdn'])) {
+            try {
+                $this->balances->requestBalancesForMsisdn((string) $data['msisdn']);
+            } catch (\Throwable $e) {
+                Log::warning('Balance refresh after recharge failed', [
+                    'msisdn' => $data['msisdn'],
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return $this->proxy($response);
     }
 
     private function registrationResponse(

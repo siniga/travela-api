@@ -22,17 +22,17 @@ class VodacomBalanceService
      */
     public function requestBalancesForMsisdn(string $msisdn): array
     {
-        $normalized = Esim::normalizeMsisdn($msisdn);
-        $query = ['msisdn' => $normalized];
+        $queryMsisdn = Esim::toVodacomMsisdn($msisdn);
+        $query = ['msisdn' => $queryMsisdn];
 
-        Log::info('Vodacom sims-balances request (post-recharge)', ['msisdn' => $normalized]);
+        Log::info('Vodacom sims-balances request (post-recharge)', ['msisdn' => $queryMsisdn]);
 
         $response = $this->vodacom->get('/api/sims-balances', $query);
         $httpStatus = $response->status();
 
         if ($httpStatus === 202) {
             Log::info('Vodacom sims-balances queued for callback', [
-                'msisdn' => $normalized,
+                'msisdn' => $queryMsisdn,
                 'body' => mb_substr((string) $response->body(), 0, 2000),
             ]);
 
@@ -42,7 +42,7 @@ class VodacomBalanceService
         if ($response->successful()) {
             $synced = $this->syncFromVodacomPayload($response->json());
             Log::info('Vodacom sims-balances synced after recharge', [
-                'msisdn' => $normalized,
+                'msisdn' => $queryMsisdn,
                 'synced' => $synced,
             ]);
 
@@ -50,7 +50,7 @@ class VodacomBalanceService
         }
 
         Log::warning('Vodacom sims-balances request failed after recharge', [
-            'msisdn' => $normalized,
+            'msisdn' => $queryMsisdn,
             'http_status' => $httpStatus,
             'body' => mb_substr((string) $response->body(), 0, 2000),
         ]);
