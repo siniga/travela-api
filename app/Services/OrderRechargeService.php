@@ -189,13 +189,14 @@ class OrderRechargeService
                 $body = $response->json();
                 $responseBody = is_array($body) ? $body : ['raw' => (string) $response->body()];
                 $httpStatus = $response->status();
-                $vodacomStatus = $this->interpretVodacomRechargeStatus($httpStatus, $responseBody);
+                $interpreted = VodacomRechargePayload::unwrapResponse($responseBody);
+                $vodacomStatus = VodacomRechargePayload::interpretStatus($interpreted, $httpStatus);
 
                 $this->logRechargeResponse($rechargeLog, $httpStatus, $responseBody, $vodacomStatus);
 
-                $transactionId = $this->extractVodacomTransactionId($responseBody);
+                $transactionId = VodacomRechargePayload::transactionIdFrom($interpreted);
 
-                if ($this->isVodacomResponseSuccess($responseBody, $httpStatus)) {
+                if (VodacomRechargePayload::isSuccessStatus($interpreted, $httpStatus)) {
                     $this->markRechargeSuccess($order, $reference, $transactionId, $responseBody, $httpStatus);
                     $this->persistItemRecharge($item, $this->buildItemRechargeRecord(
                         $reference,
@@ -206,7 +207,7 @@ class OrderRechargeService
                         $responseBody
                     ));
                     $result['processed']++;
-                } elseif ($this->isVodacomResponseFailed($responseBody, $httpStatus)) {
+                } elseif (VodacomRechargePayload::isFailedStatus($interpreted, $httpStatus)) {
                     $this->markRechargeFailed($order, $reference, $transactionId, $responseBody, $httpStatus);
                     $this->persistItemRecharge($item, $this->buildItemRechargeRecord(
                         $reference,
@@ -273,6 +274,139 @@ class OrderRechargeService
         $result['recharge_status'] = $rechargeStatus;
 
         return $result;
+    }
+
+    /**
+     * Persist Vodacom's async recharge callback onto the matching order (if any).
+     *
+     * @param  array<string, mixed>  $raw
+     * @return array{order_id: int|null, recharge_status: string|null}
+     */
+    public function applyRechargeCallback(array $raw): array
+    {
+        $payload = VodacomRechargePayload::unwrapResponse($raw);
+        $reference = isset($payload['reference']) && is_string($payload['reference']) && $payload['reference'] !== ''
+            ? VodacomRechargePayload::formatReference($payload['reference'])
+            : null;
+        $transactionId = VodacomRechargePayload::transactionIdFrom($payload, false);
+        $mappedStatus = VodacomRechargePayload::interpretStatus($payload, 200);
+
+        $order = $this->findOrderForCallback($payload);
+        if (! $order) {
+            Log::info('Vodacom recharge callback: no matching order', [
+                'reference' => $reference,
+                'transaction_id' => $transactionId,
+                'msisdn' => $payload['msisdn'] ?? null,
+            ]);
+
+            return ['order_id' => null, 'recharge_status' => null];
+        }
+
+        DB::transaction(function () use ($order, $raw, $reference, $transactionId, $mappedStatus) {
+            $order = Order::whereKey($order->id)->lockForUpdate()->firstOrFail();
+            $meta = $this->orderMetadata($order);
+            $meta['recharge_callback'] = $raw;
+            $order->recharge_response = $raw;
+            $order->recharge_http_status = $order->recharge_http_status ?: 200;
+
+            if ($reference && ! $order->recharge_reference) {
+                $order->recharge_reference = $reference;
+            }
+            if ($transactionId && ! $order->recharge_transaction_id) {
+                $order->recharge_transaction_id = $transactionId;
+            }
+
+            if ($order->recharge_status !== 'success') {
+                if (in_array($mappedStatus, ['success', 'failed', 'queued', 'pending'], true)) {
+                    $order->recharge_status = $mappedStatus;
+                }
+                if ($mappedStatus === 'success') {
+                    $order->recharge_completed_at = now();
+                }
+            }
+
+            $this->syncRechargeMetadata(
+                $order,
+                $order->recharge_status ?? $mappedStatus,
+                $reference ?? $order->recharge_reference,
+                $transactionId ?? $order->recharge_transaction_id,
+                $raw,
+            );
+            $order->save();
+        });
+
+        $order->refresh()->loadMissing('orderItems');
+        foreach ($order->orderItems as $item) {
+            $existing = $this->itemMetadataArray($item)['recharge'] ?? [];
+            if (! is_array($existing)) {
+                $existing = [];
+            }
+            $itemRef = $existing['reference'] ?? $existing['recharge_reference'] ?? null;
+            if ($reference && is_string($itemRef) && $itemRef !== '' && $itemRef !== $reference) {
+                continue;
+            }
+
+            $this->persistItemRecharge($item, $this->buildItemRechargeRecord(
+                $reference ?? (is_string($itemRef) ? $itemRef : ''),
+                $transactionId ?? ($existing['recharge_transaction_id'] ?? null),
+                $order->recharge_status ?? $mappedStatus,
+                200,
+                is_array($existing['payload'] ?? null) ? $existing['payload'] : [],
+                $raw,
+            ));
+        }
+
+        if (($order->recharge_status === 'success' || $mappedStatus === 'success')) {
+            $msisdn = $payload['msisdn'] ?? $this->orderMetadata($order)['msisdn'] ?? null;
+            if (is_string($msisdn) && $msisdn !== '') {
+                $esim = Esim::findByMsisdn($msisdn);
+                if ($esim) {
+                    $this->requestBalanceRefreshAfterRecharge($order, $esim);
+                }
+            }
+        }
+
+        return [
+            'order_id' => $order->id,
+            'recharge_status' => $order->recharge_status,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function findOrderForCallback(array $payload): ?Order
+    {
+        $reference = isset($payload['reference']) && is_string($payload['reference']) && $payload['reference'] !== ''
+            ? VodacomRechargePayload::formatReference($payload['reference'])
+            : null;
+        $transactionId = VodacomRechargePayload::transactionIdFrom($payload, false);
+
+        if ($reference) {
+            $order = Order::query()->where('recharge_reference', $reference)->latest('id')->first();
+            if ($order) {
+                return $order;
+            }
+        }
+
+        if ($transactionId) {
+            $order = Order::query()->where('recharge_transaction_id', $transactionId)->latest('id')->first();
+            if ($order) {
+                return $order;
+            }
+        }
+
+        if ($reference) {
+            $item = OrderItem::query()
+                ->where('metadata->recharge->reference', $reference)
+                ->latest('id')
+                ->first();
+            if ($item) {
+                return $item->order;
+            }
+        }
+
+        return null;
     }
 
     private function requestBalanceRefreshAfterRecharge(Order $order, Esim $esim): void
@@ -486,59 +620,6 @@ class OrderRechargeService
         }
 
         return $record;
-    }
-
-    /**
-     * @param  array<string, mixed>  $responseBody
-     */
-    private function extractVodacomTransactionId(array $responseBody): ?string
-    {
-        foreach (['transaction_id', 'transactionId', 'TransactionId', 'id'] as $key) {
-            $value = $responseBody[$key] ?? null;
-            if ($value !== null && $value !== '') {
-                return (string) $value;
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * @param  array<string, mixed>  $responseBody
-     */
-    private function isVodacomResponseSuccess(array $responseBody, int $httpStatus): bool
-    {
-        if ($httpStatus < 200 || $httpStatus >= 300) {
-            return false;
-        }
-
-        $status = strtoupper((string) ($responseBody['status'] ?? $responseBody['Status'] ?? ''));
-
-        if ($status === 'SUCCESS') {
-            return true;
-        }
-
-        return in_array(strtolower($status), ['success', 'successful', 'completed', 'complete', 'approved'], true)
-            || filter_var($responseBody['success'] ?? false, FILTER_VALIDATE_BOOLEAN);
-    }
-
-    /**
-     * @param  array<string, mixed>  $responseBody
-     */
-    private function isVodacomResponseFailed(array $responseBody, int $httpStatus): bool
-    {
-        if ($httpStatus >= 400) {
-            return true;
-        }
-
-        $status = strtoupper((string) ($responseBody['status'] ?? $responseBody['Status'] ?? ''));
-
-        if (in_array($status, ['FAILED', 'FAILURE', 'ERROR', 'REJECTED', 'DECLINED'], true)) {
-            return true;
-        }
-
-        return array_key_exists('success', $responseBody)
-            && filter_var($responseBody['success'], FILTER_VALIDATE_BOOLEAN) === false;
     }
 
     private function allRechargeableItemsFulfilled(Order $order): bool
@@ -860,53 +941,6 @@ class OrderRechargeService
         } else {
             Log::warning('Vodacom recharge response received', $context);
         }
-    }
-
-    /**
-     * @param  array<string, mixed>  $responseBody
-     */
-    private function interpretVodacomRechargeStatus(int $httpStatus, array $responseBody): string
-    {
-        if ($httpStatus < 200 || $httpStatus >= 300) {
-            return 'pending_retry';
-        }
-
-        if ($httpStatus === 202) {
-            return 'queued';
-        }
-
-        $statusText = strtolower((string) (
-            $responseBody['status']
-            ?? $responseBody['Status']
-            ?? $responseBody['state']
-            ?? ''
-        ));
-        $message = strtolower((string) ($responseBody['message'] ?? $responseBody['Message'] ?? ''));
-
-        if (
-            str_contains($message, 'queued')
-            || str_contains($statusText, 'queued')
-            || str_contains($message, 'callback')
-        ) {
-            return 'queued';
-        }
-
-        if (
-            in_array($statusText, ['success', 'successful', 'completed', 'complete', 'approved'], true)
-            || filter_var($responseBody['success'] ?? false, FILTER_VALIDATE_BOOLEAN)
-        ) {
-            return 'success';
-        }
-
-        if (in_array($statusText, ['pending', 'processing', 'in_progress', 'submitted'], true)) {
-            return 'pending';
-        }
-
-        if (str_contains($message, 'pending') || str_contains($message, 'processing')) {
-            return 'pending';
-        }
-
-        return 'success';
     }
 
     /**

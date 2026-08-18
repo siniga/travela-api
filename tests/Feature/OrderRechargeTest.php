@@ -202,6 +202,39 @@ class OrderRechargeTest extends TestCase
         $this->assertSame('success', $result['recharge_status']);
     }
 
+    public function test_fulfill_order_treats_nested_succeeded_as_success(): void
+    {
+        [$order, $item] = $this->createPaidOrderFixture();
+
+        $this->mockBalanceRefresh();
+        $this->mock(VodacomSimManagerService::class, function ($mock) {
+            $mock->shouldReceive('post')
+                ->once()
+                ->andReturn(Http::response([
+                    'data' => [
+                        'id' => 2942535,
+                        'status' => 'SUCCEEDED',
+                        'reference' => 'ORDER-NESTED',
+                        'price' => '500.00',
+                        'msisdn' => '+255797053059',
+                        'product_id' => 66,
+                        'transaction_id' => '81835876014717703343',
+                    ],
+                ], 200));
+        });
+
+        $result = app(OrderRechargeService::class)->fulfillOrder($order);
+
+        $this->assertSame(1, $result['processed']);
+        $this->assertSame(0, $result['failed']);
+
+        $order->refresh();
+        $item->refresh();
+        $this->assertSame('success', $order->recharge_status);
+        $this->assertSame('81835876014717703343', $order->recharge_transaction_id);
+        $this->assertSame('success', $item->metadata['recharge']['status']);
+    }
+
     /**
      * @return array{0: Order, 1: OrderItem}
      */

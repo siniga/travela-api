@@ -9,18 +9,21 @@ use App\Http\Requests\EsimRechargeRequest;
 use App\Http\Requests\EsimSuspendRequest;
 use App\Models\Esim;
 use App\Models\UserEsim;
+use App\Services\OrderRechargeService;
 use App\Services\VodacomBalanceService;
 use App\Services\VodacomRechargePayload;
 use App\Services\VodacomSimManagerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class EsimController extends Controller
 {
     public function __construct(
         private readonly VodacomSimManagerService $vodacom,
         private readonly VodacomBalanceService $balances,
+        private readonly OrderRechargeService $orderRecharge,
     ) {
     }
 
@@ -184,39 +187,96 @@ class EsimController extends Controller
     {
         Log::info('Vodacom recharge callback received', $this->callbackLogContext($request));
 
-        $request->validate([
-            'msisdn'    => 'required|string',
-            'amount'    => 'required|numeric',
-            'status'    => 'sometimes|string|max:30',
-            'reference' => 'sometimes|string|max:100',
-        ]);
+        $raw = $request->all();
+        $payload = VodacomRechargePayload::unwrapResponse(is_array($raw) ? $raw : []);
 
-        $esim = Esim::findByMsisdn($request->msisdn);
+        $msisdn = isset($payload['msisdn']) ? trim((string) $payload['msisdn']) : '';
+        if ($msisdn === '') {
+            Log::warning('Vodacom recharge callback validation failed', [
+                'errors' => ['msisdn' => ['The msisdn field is required.']],
+                'body' => $raw,
+            ]);
+
+            throw ValidationException::withMessages([
+                'msisdn' => 'The msisdn field is required.',
+            ]);
+        }
+
+        $amount = VodacomRechargePayload::amountFrom($payload);
+        $status = $payload['status'] ?? $payload['Status'] ?? 'SUCCESS';
+        $reference = isset($payload['reference']) && is_string($payload['reference']) && $payload['reference'] !== ''
+            ? VodacomRechargePayload::formatReference($payload['reference'])
+            : null;
+        $transactionId = VodacomRechargePayload::transactionIdFrom($payload, false);
+
+        $esim = Esim::findByMsisdn($msisdn);
 
         if (! $esim) {
-            Log::warning('Vodacom recharge callback: SIM not found', ['msisdn' => $request->msisdn]);
+            Log::warning('Vodacom recharge callback: SIM not found', ['msisdn' => $msisdn]);
 
             return response()->json(['success' => false, 'message' => 'SIM not found'], 404);
         }
 
         $assignment = UserEsim::where('esim_id', $esim->id)->first();
+        $assignmentUpdated = false;
 
-        if (! $assignment) {
-            Log::warning('Vodacom recharge callback: no user assignment', ['esim_id' => $esim->id, 'msisdn' => $esim->msisdn]);
-
-            return response()->json(['success' => false, 'message' => 'No user assignment for this SIM'], 404);
+        if ($assignment) {
+            $update = [
+                'last_recharge_status' => (string) $status,
+                'last_recharged_at' => now(),
+            ];
+            if ($amount !== null) {
+                $update['last_recharge_amount'] = $amount;
+            }
+            if ($reference) {
+                $update['last_recharge_reference'] = $reference;
+            }
+            $assignment->update($update);
+            $assignmentUpdated = true;
+        } else {
+            Log::info('Vodacom recharge callback: no user assignment yet', [
+                'esim_id' => $esim->id,
+                'msisdn' => $esim->msisdn,
+            ]);
         }
 
-        $assignment->update([
-            'last_recharge_amount'    => $request->amount,
-            'last_recharge_reference' => $request->input('reference'),
-            'last_recharge_status'    => $request->input('status', 'SUCCESS'),
-            'last_recharged_at'       => now(),
+        $orderResult = $this->orderRecharge->applyRechargeCallback(is_array($raw) ? $raw : $payload);
+
+        if (VodacomRechargePayload::isSuccessStatus($payload) && $esim->msisdn && empty($orderResult['order_id'])) {
+            try {
+                $this->balances->requestBalancesForMsisdn($esim->msisdn);
+            } catch (\Throwable $e) {
+                Log::warning('Balance refresh after recharge callback failed', [
+                    'msisdn' => $esim->msisdn,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        Log::info('Vodacom recharge callback processed', [
+            'user_esim_id' => $assignment?->id,
+            'order_id' => $orderResult['order_id'] ?? null,
+            'recharge_status' => $orderResult['recharge_status'] ?? null,
         ]);
 
-        Log::info('Vodacom recharge callback processed', ['user_esim_id' => $assignment->id]);
-
-        return response()->json(['success' => true, 'message' => 'Recharge recorded']);
+        return response()->json([
+            'success' => true,
+            'message' => 'Recharge recorded',
+            'data' => [
+                'msisdn' => $esim->msisdn,
+                'amount' => $amount,
+                'price' => $payload['price'] ?? $amount,
+                'status' => $status,
+                'reference' => $reference,
+                'transaction_id' => $transactionId,
+                'product_id' => $payload['product_id'] ?? null,
+                'product_type' => $payload['product_type'] ?? null,
+                'assignment_updated' => $assignmentUpdated,
+                'order_id' => $orderResult['order_id'] ?? null,
+                'recharge_status' => $orderResult['recharge_status'] ?? null,
+            ],
+            'callback' => $payload,
+        ]);
     }
 
     public function simsBalancesCallback(Request $request): JsonResponse

@@ -74,4 +74,39 @@ class VodacomRechargePayloadTest extends TestCase
         $this->assertStringStartsWith('RECHARGE', $first);
         $this->assertNotSame($first, $retry);
     }
+
+    public function test_unwrap_response_flattens_data_envelope(): void
+    {
+        $unwrapped = VodacomRechargePayload::unwrapResponse([
+            'data' => [
+                'status' => 'SUCCEEDED',
+                'price' => 25.0,
+                'msisdn' => '+25583479408',
+                'transaction_id' => 'tx-1',
+            ],
+        ]);
+
+        $this->assertSame('SUCCEEDED', $unwrapped['status']);
+        $this->assertSame(25.0, $unwrapped['price']);
+        $this->assertSame('tx-1', $unwrapped['transaction_id']);
+    }
+
+    public function test_succeeded_and_nested_success_are_success(): void
+    {
+        $this->assertTrue(VodacomRechargePayload::isSuccessStatus(['status' => 'SUCCEEDED']));
+        $this->assertTrue(VodacomRechargePayload::isSuccessStatus([
+            'data' => ['status' => 'SUCCESS', 'transaction_id' => 'abc'],
+        ]));
+        $this->assertSame('success', VodacomRechargePayload::interpretStatus(['status' => 'SUCCEEDED'], 200));
+        $this->assertSame('queued', VodacomRechargePayload::interpretStatus(['message' => 'queued for callback'], 202));
+    }
+
+    public function test_amount_from_prefers_price(): void
+    {
+        $this->assertSame(25.0, VodacomRechargePayload::amountFrom(['price' => 25.0]));
+        $this->assertSame('500.00', VodacomRechargePayload::amountFrom([
+            'data' => ['price' => '500.00'],
+        ]));
+        $this->assertSame(10, VodacomRechargePayload::amountFrom(['amount' => 10]));
+    }
 }
