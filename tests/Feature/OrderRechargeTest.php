@@ -9,15 +9,15 @@ use App\Models\CountryProvider;
 use App\Models\Esim;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\Payment;
 use App\Models\Provider;
 use App\Models\User;
 use App\Models\UserEsim;
-use App\Services\EvPayService;
 use App\Services\OrderRechargeService;
+use App\Services\PaymentProcessingService;
 use App\Services\VodacomBalanceService;
 use App\Services\VodacomSimManagerService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -87,10 +87,23 @@ class OrderRechargeTest extends TestCase
     public function test_evpay_paid_callback_triggers_recharge(): void
     {
         [$order] = $this->createPaidOrderFixture(pending: true);
-        $order->payment_reference = 'ORD-20260519-001';
+        $order->payment_reference = 'PAY-TEST-001';
         $order->payment_status = 'pending';
         $order->status = 'pending_payment';
         $order->save();
+
+        $payment = Payment::create([
+            'request_id' => 'PAY-TEST-001',
+            'user_id' => $order->user_id,
+            'order_id' => $order->id,
+            'provider' => 'evpay',
+            'payment_method' => 'mobile_money',
+            'operator' => 'Mpesa',
+            'phone_number' => '255712345678',
+            'amount' => 5000,
+            'currency' => 'TZS',
+            'status' => 'PENDING',
+        ]);
 
         $this->mockBalanceRefresh();
         $this->mock(VodacomSimManagerService::class, function ($mock) {
@@ -100,19 +113,18 @@ class OrderRechargeTest extends TestCase
                 ->andReturn(Http::response(['status' => 'SUCCESS', 'transaction_id' => 'tx-1'], 200));
         });
 
-        $service = app(EvPayService::class);
-        $result = $service->handleCallback(Request::create('/api/payments/evpay/callback', 'POST', [
-            'reference' => 'ORD-20260519-001',
-            'status' => 'paid',
-        ]));
+        app(PaymentProcessingService::class)->applyProviderUpdate($payment, [
+            'id' => 'E110526AC14K7X2M9',
+            'orderReference' => 'PAY-TEST-001',
+            'status' => 'SUCCESS',
+            'description' => 'Customer paid',
+        ], 'payment.succeeded');
 
-        $this->assertTrue($result['success']);
         $order->refresh();
+        $payment->refresh();
         $this->assertSame('paid', $order->payment_status);
-
-        $this->assertDatabaseHas('order_items', [
-            'order_id' => $order->id,
-        ]);
+        $this->assertSame('SUCCESS', $payment->status);
+        $this->assertNotNull($payment->fulfilled_at);
 
         $item = $order->orderItems()->first();
         $item->refresh();

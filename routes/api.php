@@ -11,8 +11,9 @@ use App\Http\Controllers\CountryController;
 use App\Http\Controllers\BundleTypeController;
 use App\Http\Controllers\BundleController;
 use App\Http\Controllers\ProviderController;
-use App\Http\Controllers\OrderController;  
-use App\Http\Controllers\EvPayController;
+use App\Http\Controllers\OrderController;
+use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\EvPayWebhookController;
 use App\Http\Controllers\Admin\RevenueDashboard;
 use App\Http\Controllers\Api\EsimController;
 use App\Http\Controllers\Api\UserEsimController;
@@ -40,8 +41,8 @@ Route::prefix('auth')->group(function () {
     ->middleware('auth:sanctum');
 });
 
-// EvPay server callback (no auth)
-Route::post('/payments/evpay/callback', [EvPayController::class, 'callback']);
+// EVPay webhook (no user auth — verified by EVPay signature)
+Route::post('/evpay/webhook', EvPayWebhookController::class);
 
 Route::prefix('public')->group(function () {
     // Vodacom callbacks
@@ -169,6 +170,11 @@ Route::prefix('admin')->middleware(['auth:sanctum', 'admin'])->group(function ()
 
 Route::middleware('auth:sanctum')->get('/orders/search', [OrderController::class, 'searchByOrderNumber']);
 
+Route::middleware('auth:sanctum')->group(function () {
+  Route::post('/payments/mobile-money', [PaymentController::class, 'storeMobileMoney']);
+  Route::get('/payments/{payment}/status', [PaymentController::class, 'status']);
+});
+
 Route::middleware(['auth:sanctum', 'verified'])->group(function () {
   Route::post('/logout', [AuthController::class, 'logout']);
 
@@ -180,10 +186,6 @@ Route::middleware(['auth:sanctum', 'verified'])->group(function () {
   Route::get('/orders/{draft_id}', [OrderController::class, 'show']);
   Route::put('/orders/{draft_id}', [OrderController::class, 'update']);
   Route::delete('/orders/{draft_id}', [OrderController::class, 'destroy']);
-
-  
-  Route::post('/orders/{orderId}/prepare-evpay', [EvPayController::class, 'preparePayment']);
-  Route::post('/orders/{orderId}/evpay-checkout-url', [EvPayController::class, 'createCheckoutUrl']);
 });
 
 // Authenticated user info (no email verification required)

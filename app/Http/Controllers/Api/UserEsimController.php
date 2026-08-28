@@ -35,12 +35,12 @@ class UserEsimController extends Controller
 
         $esims = $request->user()
             ->esims()
-            ->with(['esim', 'bundle', 'order', 'orderItem'])
+            ->with(['esim', 'bundle.type', 'order', 'orderItem'])
             ->orderBy('id', 'desc')
             ->get()
             ->map(function (UserEsim $row) {
                 $row = $this->esimOrderLink->ensureAssignmentLinked($row);
-                $row->loadMissing(['esim', 'bundle', 'order', 'orderItem']);
+                $row->loadMissing(['esim', 'bundle.type', 'order', 'orderItem']);
 
                 return $row->toAssignmentArray();
             });
@@ -129,7 +129,7 @@ class UserEsimController extends Controller
             $userEsim->forceFill(['device_activated_at' => now()])->save();
         }
 
-        $userEsim->loadMissing(['esim', 'bundle', 'order', 'orderItem']);
+        $userEsim->loadMissing(['esim', 'bundle.type', 'order', 'orderItem']);
 
         return response()->json([
             'success' => true,
@@ -176,7 +176,7 @@ class UserEsimController extends Controller
 
             if ($this->balanceIsFresh($fetchedAt, $since, $balances)) {
                 $assignment = $this->esimOrderLink->ensureAssignmentLinked($assignment);
-                $assignment->loadMissing(['esim', 'bundle', 'order', 'orderItem']);
+                $assignment->loadMissing(['esim', 'bundle.type', 'order', 'orderItem']);
 
                 return response()->json([
                     'success' => true,
@@ -207,7 +207,7 @@ class UserEsimController extends Controller
 
         if ($existing) {
             $existing = $this->esimOrderLink->ensureAssignmentLinked($existing);
-            $existing->loadMissing(['esim', 'bundle', 'order', 'orderItem']);
+            $existing->loadMissing(['esim', 'bundle.type', 'order', 'orderItem']);
 
             return $this->assignmentStatusResponse($existing, 'assigned');
         }
@@ -283,7 +283,7 @@ class UserEsimController extends Controller
 
         if ($existing) {
             $existing = $this->esimOrderLink->ensureAssignmentLinked($existing);
-            $existing->loadMissing(['esim', 'bundle', 'order', 'orderItem']);
+            $existing->loadMissing(['esim', 'bundle.type', 'order', 'orderItem']);
 
             return $this->registrationResponse($existing, false, 200, 'already_assigned');
         }
@@ -426,7 +426,7 @@ class UserEsimController extends Controller
         string $assignmentStatus = 'assigned',
         ?array $recharge = null,
     ): JsonResponse {
-        $assignment->loadMissing(['esim', 'bundle', 'order', 'orderItem']);
+        $assignment->loadMissing(['esim', 'bundle.type', 'order', 'orderItem']);
 
         return response()->json([
             'success' => true,
@@ -442,7 +442,7 @@ class UserEsimController extends Controller
 
     private function assignmentStatusResponse(UserEsim $assignment, string $status): JsonResponse
     {
-        $assignment->loadMissing(['esim', 'bundle', 'order', 'orderItem']);
+        $assignment->loadMissing(['esim', 'bundle.type', 'order', 'orderItem']);
 
         return response()->json([
             'success' => true,
@@ -460,7 +460,7 @@ class UserEsimController extends Controller
         return UserEsim::query()
             ->where('user_id', $userId)
             ->whereHas('esim', fn ($q) => $q->whereNotNull('msisdn')->where('msisdn', '!=', ''))
-            ->with(['esim', 'bundle', 'order', 'orderItem'])
+            ->with(['esim', 'bundle.type', 'order', 'orderItem'])
             ->first();
     }
 

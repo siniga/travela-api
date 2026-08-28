@@ -10,7 +10,6 @@ use App\Models\Trip;
 use App\Models\Kyc;
 use App\Models\Esim;
 use App\Models\UserEsim;
-use App\Services\EvPayService;
 use App\Services\PhysicalSimIssuanceService;
 use App\Services\SimAssignmentService;
 use Illuminate\Http\JsonResponse;
@@ -20,7 +19,6 @@ use Illuminate\Support\Facades\DB;
 class OrderController extends Controller
 {
     public function __construct(
-        private readonly EvPayService $evpay,
         private readonly PhysicalSimIssuanceService $physicalIssuance,
         private readonly SimAssignmentService $simAssignment,
     ) {
@@ -204,13 +202,15 @@ class OrderController extends Controller
             $order->refresh();
             $order->load(['trip', 'orderItems', 'user', 'kyc']);
 
-            $checkoutUrl = null;
-            $paymentRef = null;
+            $paymentRef = $order->payment_reference;
             if ($paymentStatus !== 'paid') {
-                $this->evpay->prepare($order);
-                $checkout = $this->evpay->createCheckoutUrl($order);
-                $checkoutUrl = $checkout['checkout_url'] ?? null;
-                $paymentRef = $checkout['payment_reference'] ?? null;
+                $order->payment_gateway = 'evpay';
+                $order->payment_status = $order->payment_status ?: 'pending';
+                if ($order->status !== 'paid') {
+                    $order->status = 'pending_payment';
+                }
+                $order->save();
+                $paymentRef = $order->payment_reference;
             }
 
             $assignResult = null;
@@ -228,7 +228,6 @@ class OrderController extends Controller
                     'total_amount' => $order->total_amount,
                     'currency' => $order->currency,
                     'payment_reference' => $paymentRef,
-                    'checkout_url' => $checkoutUrl,
                     'sim_assignment' => $this->simAssignment->assignmentSummary($assignResult),
                 ],
             ], 201);

@@ -21,12 +21,12 @@ return [
     ],
 
     'evpay' => [
-        'merchant_id' => env('EVPAY_MERCHANT_ID'),
-        'secret_key' => env('EVPAY_SECRET_KEY'),
-        'checkout_url' => env('EVPAY_CHECKOUT_URL', 'https://checkout.evmak.com/checkout'),
-        'return_url' => env('EVPAY_RETURN_URL', 'https://thetravela.com/dashboard'),
+        'base_url' => env('EVPAY_BASE_URL'),
+        'client_id' => env('EVPAY_CLIENT_ID'),
+        'client_secret' => env('EVPAY_CLIENT_SECRET'),
+        'sig_key' => env('EVPAY_SIG_KEY'),
         'callback_url' => env('EVPAY_CALLBACK_URL'),
-        'callback_require_signature' => env('EVPAY_CALLBACK_REQUIRE_SIGNATURE', false),
+        'webhook_secret' => env('EVPAY_WEBHOOK_SECRET'),
     ],
 
    'fx' => [

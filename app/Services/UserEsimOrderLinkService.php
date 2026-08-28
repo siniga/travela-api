@@ -137,7 +137,7 @@ class UserEsimOrderLinkService
     {
         return $this->paidOrdersForUser($userId)
             ->with([
-                'orderItems' => fn ($q) => $q->where('type', 'bundle')->with('bundle'),
+                'orderItems' => fn ($q) => $q->where('type', 'bundle')->with('bundle.type'),
             ])
             ->first();
     }
@@ -151,12 +151,18 @@ class UserEsimOrderLinkService
             return null;
         }
 
+        if ($bundle && ! $bundle->relationLoaded('type')) {
+            $bundle->load('type');
+        }
+
         $durationDays = $item?->validity_days ?? $bundle?->validity_days;
 
         return [
             'id' => $bundle?->id ?? $item?->bundle_id,
             'name' => $bundle?->name ?? $item?->bundle_name,
             'alias' => $bundle?->alias,
+            'type' => $bundle?->type?->code,
+            'type_name' => $bundle?->type?->name,
             'sim_bundle_id' => $bundle?->sim_bundle_id,
             'data_mb' => $bundle?->data_mb ?? $item?->data_amount,
             'bundle_size' => $bundle?->bundle_size,
