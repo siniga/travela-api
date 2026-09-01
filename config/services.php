@@ -21,6 +21,15 @@ return [
     ],
 
     'evpay' => [
+        // Hosted checkout (checkout.evmak.com)
+        'merchant_id' => env('EVPAY_MERCHANT_ID'),
+        'secret_key' => env('EVPAY_SECRET_KEY'),
+        'checkout_url' => env('EVPAY_CHECKOUT_URL', 'https://checkout.evmak.com/checkout'),
+        'return_url' => env('EVPAY_RETURN_URL', 'https://thetravela.com/dashboard'),
+        'hosted_callback_url' => env('EVPAY_HOSTED_CALLBACK_URL'),
+        'callback_require_signature' => env('EVPAY_CALLBACK_REQUIRE_SIGNATURE', false),
+
+        // Mobile money (USSD)
         'base_url' => env('EVPAY_BASE_URL'),
         'client_id' => env('EVPAY_CLIENT_ID'),
         'client_secret' => env('EVPAY_CLIENT_SECRET'),

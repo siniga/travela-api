@@ -30,6 +30,11 @@
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
+        <env name="EVPAY_MERCHANT_ID" value="test-merchant" force="true"/>
+        <env name="EVPAY_SECRET_KEY" value="test-hosted-secret" force="true"/>
+        <env name="EVPAY_CHECKOUT_URL" value="https://checkout.evmak.com/checkout" force="true"/>
+        <env name="EVPAY_RETURN_URL" value="https://thetravela.com/dashboard" force="true"/>
+        <env name="EVPAY_HOSTED_CALLBACK_URL" value="https://api.test/api/payments/evpay/callback" force="true"/>
         <env name="EVPAY_BASE_URL" value="https://evpay.test" force="true"/>
         <env name="EVPAY_CLIENT_ID" value="test-client-id" force="true"/>
         <env name="EVPAY_CLIENT_SECRET" value="test-client-secret" force="true"/>
