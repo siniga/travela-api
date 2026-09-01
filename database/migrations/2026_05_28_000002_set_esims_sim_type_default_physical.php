@@ -9,15 +9,19 @@ return new class extends Migration
     {
         DB::table('esims')->update(['sim_type' => 'physical']);
 
-        DB::statement(
-            "ALTER TABLE `esims` MODIFY `sim_type` ENUM('esim', 'physical') NOT NULL DEFAULT 'physical'"
-        );
+        if (in_array(DB::getDriverName(), ['mysql', 'mariadb'], true)) {
+            DB::statement(
+                "ALTER TABLE `esims` MODIFY `sim_type` ENUM('esim', 'physical') NOT NULL DEFAULT 'physical'"
+            );
+        }
     }
 
     public function down(): void
     {
-        DB::statement(
-            "ALTER TABLE `esims` MODIFY `sim_type` ENUM('esim', 'physical') NOT NULL DEFAULT 'esim'"
-        );
+        if (in_array(DB::getDriverName(), ['mysql', 'mariadb'], true)) {
+            DB::statement(
+                "ALTER TABLE `esims` MODIFY `sim_type` ENUM('esim', 'physical') NOT NULL DEFAULT 'esim'"
+            );
+        }
     }
 };
