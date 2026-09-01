@@ -2,7 +2,6 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -10,7 +9,9 @@ return new class extends Migration
     public function up(): void
     {
         if (Schema::hasColumn('bundles', 'price') && ! Schema::hasColumn('bundles', 'price_usd')) {
-            DB::statement('ALTER TABLE bundles CHANGE price price_usd DECIMAL(12,2) NOT NULL');
+            Schema::table('bundles', function (Blueprint $table) {
+                $table->renameColumn('price', 'price_usd');
+            });
         }
 
         if (! Schema::hasColumn('bundles', 'price_tzs')) {
@@ -29,7 +30,9 @@ return new class extends Migration
         }
 
         if (Schema::hasColumn('bundles', 'price_usd') && ! Schema::hasColumn('bundles', 'price')) {
-            DB::statement('ALTER TABLE bundles CHANGE price_usd price DECIMAL(12,2) NOT NULL');
+            Schema::table('bundles', function (Blueprint $table) {
+                $table->renameColumn('price_usd', 'price');
+            });
         }
     }
 };
