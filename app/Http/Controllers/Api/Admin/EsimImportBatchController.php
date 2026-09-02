@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Esim;
 use App\Models\EsimImportBatch;
 use App\Models\EsimImportItem;
-use App\Services\EsimSingleImportService;
+use App\Services\Esim\EsimSingleImportService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -17,8 +17,7 @@ class EsimImportBatchController extends Controller
 {
     public function __construct(
         private readonly EsimSingleImportService $importService,
-    ) {
-    }
+    ) {}
 
     public function store(Request $request): JsonResponse
     {
@@ -88,7 +87,7 @@ class EsimImportBatchController extends Controller
         ]);
 
         try {
-            $result = DB::transaction(function () use ($batch, $item, $validated, $request) {
+            $result = DB::transaction(function () use ($batch, $item, $validated) {
                 $result = $this->importService->process(
                     $batch,
                     $item,

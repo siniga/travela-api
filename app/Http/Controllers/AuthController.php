@@ -2,10 +2,10 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Requests\RegisterRequest;
 use App\Http\Requests\LoginRequest;
+use App\Http\Requests\RegisterRequest;
 use App\Models\User;
-use App\Services\EmailVerificationService;
+use App\Services\Email\EmailVerificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 
@@ -13,10 +13,10 @@ class AuthController extends Controller
 {
     public function __construct(
         private readonly EmailVerificationService $emailVerification,
-    ) {
-    }
+    ) {}
 
-    public function register(RegisterRequest $req) {
+    public function register(RegisterRequest $req)
+    {
         $user = User::create([
             'name' => $req->name,
             'email' => $req->email,
@@ -29,7 +29,7 @@ class AuthController extends Controller
         $token = $user->createToken($req->device ?? 'mobile')->plainTextToken;
 
         $response = [
-            'user'  => $this->userPayload($user->fresh()),
+            'user' => $this->userPayload($user->fresh()),
             'token' => $token,
             'email_verification_required' => true,
         ];
@@ -44,7 +44,8 @@ class AuthController extends Controller
         return response()->json($response, 201);
     }
 
-    public function login(LoginRequest $req) {
+    public function login(LoginRequest $req)
+    {
         $user = User::query()
             ->with('agentLocation')
             ->where('email', $req->email)
@@ -61,13 +62,14 @@ class AuthController extends Controller
         $token = $user->createToken($req->device ?? 'mobile')->plainTextToken;
 
         return response()->json([
-            'user'  => $this->userPayload($user),
+            'user' => $this->userPayload($user),
             'token' => $token,
             'email_verified' => ! is_null($user->email_verified_at),
         ]);
     }
 
-    public function me(Request $req) {
+    public function me(Request $req)
+    {
         $user = $req->user();
         if ($user) {
             $user->loadMissing('agentLocation');
@@ -76,9 +78,11 @@ class AuthController extends Controller
         return response()->json(['user' => $this->userPayload($user)]);
     }
 
-    public function logout(Request $req) {
+    public function logout(Request $req)
+    {
         // revoke current token only
         $req->user()->currentAccessToken()->delete();
+
         return response()->json(['message' => 'Logged out']);
     }
 

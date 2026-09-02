@@ -10,9 +10,14 @@ use PDOException;
 
 abstract class TestCase extends BaseTestCase
 {
+    /**
+     * Some feature tests need MySQL because historical migrations use CHANGE/MODIFY.
+     */
+    protected bool $forceMysqlTesting = false;
+
     protected function setUp(): void
     {
-        if (! extension_loaded('pdo_sqlite')) {
+        if (! extension_loaded('pdo_sqlite') || $this->forceMysqlTesting) {
             $this->useMysqlTestingDatabase();
         }
 
@@ -24,7 +29,7 @@ abstract class TestCase extends BaseTestCase
         $app = require Application::inferBasePath().'/bootstrap/app.php';
         $app->make(Kernel::class)->bootstrap();
 
-        if (! extension_loaded('pdo_sqlite')) {
+        if (! extension_loaded('pdo_sqlite') || $this->forceMysqlTesting) {
             $database = $_ENV['DB_DATABASE'] ?? getenv('DB_DATABASE') ?: 'travela_testing';
             $app['config']->set('database.default', 'mysql');
             $app['config']->set('database.connections.mysql.database', $database);

@@ -14,6 +14,7 @@ Artisan::command('user:make-admin {email}', function () {
 
     if (! $user) {
         $this->error("User not found: {$email}");
+
         return 1;
     }
 
@@ -21,6 +22,7 @@ Artisan::command('user:make-admin {email}', function () {
     $user->save();
 
     $this->info("User promoted to admin: {$email}");
+
     return 0;
 })->purpose('Promote a user to admin role');
 
@@ -28,11 +30,12 @@ Artisan::command('resend:check', function () {
     $key = (string) config('services.resend.key');
     if ($key === '') {
         $this->error('RESEND_KEY is not set in .env');
+
         return 1;
     }
 
-    /** @var \App\Services\ResendMailConfigurator $configurator */
-    $configurator = app(\App\Services\ResendMailConfigurator::class);
+    /** @var \App\Services\Email\ResendMailConfigurator $configurator */
+    $configurator = app(\App\Services\Email\ResendMailConfigurator::class);
     $verified = $configurator->verifiedDomainNames();
     $resolvedFrom = $configurator->resolvedFromAddress();
 
@@ -43,6 +46,7 @@ Artisan::command('resend:check', function () {
     if ($verified === []) {
         $this->warn('No verified Resend domains found.');
         $this->line('Add and verify a domain at https://resend.com/domains');
+
         return 1;
     }
 
@@ -69,9 +73,11 @@ Artisan::command('mail:test {email}', function () {
         );
     } catch (\Throwable $e) {
         $this->error('Mail failed: '.$e->getMessage());
+
         return 1;
     }
 
     $this->info("Test verification email sent to {$email}");
+
     return 0;
 })->purpose('Send a test verification email through the configured mailer');

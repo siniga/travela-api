@@ -4,7 +4,7 @@ namespace Tests\Unit;
 
 use App\Mail\EmailVerificationCodeMail;
 use App\Models\User;
-use App\Services\EmailVerificationService;
+use App\Services\Email\EmailVerificationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
 use RuntimeException;

@@ -6,8 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Esim;
 use App\Models\EsimImportBatch;
 use App\Models\EsimImportItem;
-use App\Services\EsimSingleImportService;
-use App\Services\VodacomSimProvisioningService;
+use App\Services\Esim\EsimSingleImportService;
+use App\Services\Esim\VodacomSimProvisioningService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,8 +18,7 @@ class EsimImportItemController extends Controller
     public function __construct(
         private readonly EsimSingleImportService $importService,
         private readonly VodacomSimProvisioningService $vodacomProvisioning,
-    ) {
-    }
+    ) {}
 
     public function confirm(Request $request, EsimImportItem $item): JsonResponse
     {

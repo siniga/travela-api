@@ -2,7 +2,7 @@
 
 namespace App\Providers;
 
-use App\Services\ResendMailConfigurator;
+use App\Services\Email\ResendMailConfigurator;
 use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;

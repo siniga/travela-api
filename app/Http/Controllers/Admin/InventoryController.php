@@ -3,15 +3,13 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Services\SimInventoryService;
+use App\Services\Esim\SimInventoryService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class InventoryController extends Controller
 {
-    public function __construct(private readonly SimInventoryService $inventory)
-    {
-    }
+    public function __construct(private readonly SimInventoryService $inventory) {}
 
     /**
      * SIM stock levels from esims + user_esims (assigned vs available).

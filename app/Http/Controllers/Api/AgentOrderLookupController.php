@@ -7,8 +7,8 @@ use App\Models\Esim;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\UserEsim;
-use App\Services\SimAssignmentService;
-use App\Services\UserEsimOrderLinkService;
+use App\Services\Esim\SimAssignmentService;
+use App\Services\Esim\UserEsimOrderLinkService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -22,8 +22,7 @@ class AgentOrderLookupController extends Controller
     public function __construct(
         private readonly SimAssignmentService $simAssignment,
         private readonly UserEsimOrderLinkService $esimOrderLink,
-    ) {
-    }
+    ) {}
 
     /**
      * Counter lookup: match paid physical orders by the last digits of draft_id.

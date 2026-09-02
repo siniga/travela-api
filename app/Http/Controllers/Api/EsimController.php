@@ -9,10 +9,10 @@ use App\Http\Requests\EsimRechargeRequest;
 use App\Http\Requests\EsimSuspendRequest;
 use App\Models\Esim;
 use App\Models\UserEsim;
-use App\Services\OrderRechargeService;
-use App\Services\VodacomBalanceService;
-use App\Services\VodacomRechargePayload;
-use App\Services\VodacomSimManagerService;
+use App\Services\Esim\OrderRechargeService;
+use App\Services\Esim\VodacomBalanceService;
+use App\Services\Esim\VodacomRechargePayload;
+use App\Services\Esim\VodacomSimManagerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -24,8 +24,7 @@ class EsimController extends Controller
         private readonly VodacomSimManagerService $vodacom,
         private readonly VodacomBalanceService $balances,
         private readonly OrderRechargeService $orderRecharge,
-    ) {
-    }
+    ) {}
 
     public function organisationBalance()
     {
@@ -40,12 +39,14 @@ class EsimController extends Controller
     public function products(Request $request)
     {
         $query = $request->only(['network_id', 'product_type', 'page', 'page_size']);
+
         return $this->proxy($this->vodacom->get('/api/products', $query));
     }
 
     public function sims(Request $request)
     {
         $query = $request->only(['iccid', 'imsi', 'msisdn', 'network_id', 'status', 'page', 'page_size']);
+
         return $this->proxy($this->vodacom->get('/api/sims', $query));
     }
 
@@ -85,6 +86,7 @@ class EsimController extends Controller
     public function suspend(EsimSuspendRequest $request)
     {
         $query = array_filter($request->only(['msisdn', 'iccid', 'imsi']), fn ($v) => ! is_null($v) && $v !== '');
+
         return $this->proxy($this->vodacom->post('/api/sims-suspend', $query));
     }
 
@@ -295,13 +297,13 @@ class EsimController extends Controller
 
         try {
             $validated = $request->validate([
-                'msisdn'           => 'required|string',
-                'balances'         => 'required_without:balance|array',
+                'msisdn' => 'required|string',
+                'balances' => 'required_without:balance|array',
                 'balances.AIRTIME' => 'nullable|numeric',
-                'balances.DATA'    => 'nullable|numeric',
-                'balances.SMS'     => 'nullable|numeric',
-                'balance'          => 'required_without:balances|numeric',
-                'currency'         => 'sometimes|string|max:10',
+                'balances.DATA' => 'nullable|numeric',
+                'balances.SMS' => 'nullable|numeric',
+                'balance' => 'required_without:balances|numeric',
+                'currency' => 'sometimes|string|max:10',
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
             Log::warning('Vodacom sims-balances callback validation failed', [

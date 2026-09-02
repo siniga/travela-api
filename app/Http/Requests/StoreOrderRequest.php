@@ -57,7 +57,7 @@ class StoreOrderRequest extends FormRequest
             'kyc.reason_for_travel' => [Rule::requiredIf(fn () => ! $this->isTopUpRequest()), 'nullable', 'string', 'max:120'],
 
             'payment' => ['nullable', 'array'],
-            'payment.status' => ['nullable', 'string', 'in:paid,pending'],
+            'payment.status' => ['nullable', 'string', 'in:pending'],
             'payment.reference' => ['nullable', 'string', 'max:120'],
             'payment.method' => ['nullable', 'string', 'max:50'],
             'payment.paid_at' => ['nullable', 'date'],
@@ -88,11 +88,21 @@ class StoreOrderRequest extends FormRequest
             $this->merge(['trip' => $trip]);
         }
 
-        if (! $this->isTopUpRequest() || ! $this->user()) {
-            return;
+        $user = $this->user();
+        if ($user && ! $user->isAdmin() && ! $user->isAgent()) {
+            $this->merge(['user_id' => $user->id]);
         }
 
-        $user = $this->user();
+        $payment = $this->input('payment');
+        if (is_array($payment)) {
+            $payment['status'] = 'pending';
+            unset($payment['paid_at']);
+            $this->merge(['payment' => $payment]);
+        }
+
+        if (! $this->isTopUpRequest() || ! $user) {
+            return;
+        }
         $this->merge(['user_id' => $user->id, 'simType' => Esim::SIM_TYPE_ESIM]);
 
         $kyc = $user->kyc;

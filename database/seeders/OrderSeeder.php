@@ -3,10 +3,10 @@
 namespace Database\Seeders;
 
 use App\Models\Bundle;
+use App\Models\Kyc;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Trip;
-use App\Models\Kyc;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 
@@ -72,7 +72,7 @@ class OrderSeeder extends Seeder
                 'metadata' => [
                     'created_at' => '2025-10-20T14:15:00Z',
                     'status' => 'paid',
-                    'payment_method' => 'mobile_money',
+                    'payment_method' => 'evpay',
                 ],
                 'kyc' => [
                     'passport_id' => 'B9876543',
@@ -133,7 +133,7 @@ class OrderSeeder extends Seeder
                 'metadata' => [
                     'created_at' => '2025-10-18T16:20:00Z',
                     'status' => 'processing',
-                    'payment_method' => 'mobile_money',
+                    'payment_method' => 'evpay',
                 ],
                 'kyc' => [
                     'passport_id' => 'D1111111',

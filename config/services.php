@@ -21,29 +21,21 @@ return [
     ],
 
     'evpay' => [
-        // Hosted checkout (checkout.evmak.com)
-        'merchant_id' => env('EVPAY_MERCHANT_ID'),
-        'secret_key' => env('EVPAY_SECRET_KEY'),
-        'checkout_url' => env('EVPAY_CHECKOUT_URL', 'https://checkout.evmak.com/checkout'),
-        'return_url' => env('EVPAY_RETURN_URL', 'https://thetravela.com/dashboard'),
-        'hosted_callback_url' => env('EVPAY_HOSTED_CALLBACK_URL'),
-        'callback_require_signature' => env('EVPAY_CALLBACK_REQUIRE_SIGNATURE', false),
-
-        // Mobile money (USSD)
         'base_url' => env('EVPAY_BASE_URL'),
         'client_id' => env('EVPAY_CLIENT_ID'),
         'client_secret' => env('EVPAY_CLIENT_SECRET'),
-        'sig_key' => env('EVPAY_SIG_KEY'),
+        'signing_key' => env('EVPAY_SIGNING_KEY'),
         'callback_url' => env('EVPAY_CALLBACK_URL'),
-        'webhook_secret' => env('EVPAY_WEBHOOK_SECRET'),
+        'redirect_url' => env('EVPAY_REDIRECT_URL', env('EVPAY_RETURN_URL')),
+        'cancel_url' => env('EVPAY_CANCEL_URL', env('EVPAY_RETURN_URL')),
     ],
 
-   'fx' => [
+    'fx' => [
         // TZS per 1 USD (used when returning bundles in USD)
         'tzs_to_usd_rate' => (float) env('TZS_TO_USD_RATE', 2610),
-   ],
+    ],
 
-   'vodacom_sim' => [
+    'vodacom_sim' => [
         // Full origin only (e.g. https://simmanager.vodacom.co.tz) — paths include /api/...
         'base_url' => env('VODACOM_SIM_BASE_URL', env('ESIM_MANAGER_URL')),
         'api_key' => env('VODACOM_SIM_API_KEY', env('ESIM_MANAGER_KEY')),
@@ -57,7 +49,7 @@ return [
             72 => env('VODACOM_RECHARGE_AIRTIME_72', '500'),
         ], fn ($v) => $v !== null && $v !== ''),
         'recharge_reference_prefix' => env('VODACOM_RECHARGE_REFERENCE_PREFIX', 'RECHARGE'),
-   ],
+    ],
 
     'postmark' => [
         'token' => env('POSTMARK_TOKEN'),

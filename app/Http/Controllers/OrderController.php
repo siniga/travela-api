@@ -2,17 +2,16 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreOrderRequest;
+use App\Models\Esim;
+use App\Models\Kyc;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Trip;
-use App\Models\Kyc;
-use App\Models\Esim;
 use App\Models\UserEsim;
-use App\Services\EvPayService;
-use App\Services\PhysicalSimIssuanceService;
-use App\Services\SimAssignmentService;
+use App\Services\Esim\PhysicalSimIssuanceService;
+use App\Services\Esim\SimAssignmentService;
+use App\Services\EvPay\EvPayCheckoutService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -20,11 +19,10 @@ use Illuminate\Support\Facades\DB;
 class OrderController extends Controller
 {
     public function __construct(
-        private readonly EvPayService $evpay,
+        private readonly EvPayCheckoutService $evpay,
         private readonly PhysicalSimIssuanceService $physicalIssuance,
         private readonly SimAssignmentService $simAssignment,
-    ) {
-    }
+    ) {}
 
     public function getOrders(): JsonResponse
     {
@@ -116,8 +114,7 @@ class OrderController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            $paymentStatus = data_get($v, 'payment.status', 'pending');
-            $newStatus = ($paymentStatus === 'paid') ? 'paid' : 'pending_payment';
+            $newStatus = 'pending_payment';
 
             $meta = array_merge($order ? $this->metadataArray($order) : [], [
                 'created_at' => $v['order_metadata']['created_at'],
@@ -149,9 +146,8 @@ class OrderController extends Controller
                 $existingCheckoutUrl = null;
                 $existingPaymentRef = $order->payment_reference;
                 if ($order->payment_status !== 'paid') {
-                    $this->evpay->prepare($order);
-                    $checkout = $this->evpay->createCheckoutUrl($order);
-                    $existingCheckoutUrl = $checkout['checkout_url'] ?? null;
+                    $checkout = $this->evpay->startCardPayment($order);
+                    $existingCheckoutUrl = $checkout['checkout_url'] ?? $checkout['payment_url'] ?? null;
                     $existingPaymentRef = $checkout['payment_reference'] ?? $existingPaymentRef;
                     $order->refresh();
                 }
@@ -167,6 +163,7 @@ class OrderController extends Controller
                         'currency' => $order->currency,
                         'payment_reference' => $existingPaymentRef,
                         'checkout_url' => $existingCheckoutUrl,
+                        'payment_url' => $existingCheckoutUrl,
                     ],
                 ], 200);
             }
@@ -192,12 +189,11 @@ class OrderController extends Controller
                 'metadata' => $meta,
             ];
 
-            if ($paymentStatus === 'paid') {
+            if ($order && $order->payment_status === 'paid') {
+                $orderPayload['status'] = 'paid';
                 $orderPayload['payment_status'] = 'paid';
-                $orderPayload['paid_at'] = data_get($v, 'payment.paid_at') ?: now();
-                if ($ref = data_get($v, 'payment.reference')) {
-                    $orderPayload['payment_reference'] = $ref;
-                }
+                $orderPayload['paid_at'] = $order->paid_at;
+                $orderPayload['payment_reference'] = $order->payment_reference;
             }
 
             if (! $order) {
@@ -218,16 +214,11 @@ class OrderController extends Controller
 
             $checkoutUrl = null;
             $paymentRef = $order->payment_reference;
-            if ($paymentStatus !== 'paid') {
-                $this->evpay->prepare($order);
-                $checkout = $this->evpay->createCheckoutUrl($order);
-                $checkoutUrl = $checkout['checkout_url'] ?? null;
-                $paymentRef = $checkout['payment_reference'] ?? $paymentRef;
-            }
-
             $assignResult = null;
-            if ($paymentStatus === 'paid') {
-                $assignResult = $this->simAssignment->fulfillPaidOrder($order);
+            if ($order->payment_status !== 'paid') {
+                $checkout = $this->evpay->startCardPayment($order);
+                $checkoutUrl = $checkout['checkout_url'] ?? $checkout['payment_url'] ?? null;
+                $paymentRef = $checkout['payment_reference'] ?? $paymentRef;
             }
 
             return response()->json([
@@ -241,6 +232,7 @@ class OrderController extends Controller
                     'currency' => $order->currency,
                     'payment_reference' => $paymentRef,
                     'checkout_url' => $checkoutUrl,
+                    'payment_url' => $checkoutUrl,
                     'sim_assignment' => $this->simAssignment->assignmentSummary($assignResult),
                 ],
             ], 201);
@@ -264,16 +256,16 @@ class OrderController extends Controller
             ->where('draft_id', $draftId)
             ->first();
 
-        if (!$order) {
+        if (! $order) {
             return response()->json([
                 'success' => false,
-                'message' => 'Order not found'
+                'message' => 'Order not found',
             ], 404);
         }
 
         return response()->json([
             'success' => true,
-            'data' => $order
+            'data' => $order,
         ]);
     }
 
@@ -286,11 +278,11 @@ class OrderController extends Controller
             DB::beginTransaction();
 
             $order = Order::where('draft_id', $draftId)->first();
-            
-            if (!$order) {
+
+            if (! $order) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Order not found'
+                    'message' => 'Order not found',
                 ], 404);
             }
 
@@ -317,16 +309,16 @@ class OrderController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Order updated successfully',
-                'data' => $order
+                'data' => $order,
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to update order',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -338,11 +330,11 @@ class OrderController extends Controller
     {
         try {
             $order = Order::where('draft_id', $draftId)->first();
-            
-            if (!$order) {
+
+            if (! $order) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Order not found'
+                    'message' => 'Order not found',
                 ], 404);
             }
 
@@ -350,14 +342,14 @@ class OrderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Order deleted successfully'
+                'message' => 'Order deleted successfully',
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete order',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -368,7 +360,7 @@ class OrderController extends Controller
     private function createOrUpdateKyc(array $validated): Kyc
     {
         $kycData = $validated['kyc'];
-        
+
         $kyc = Kyc::updateOrCreate(
             ['user_id' => $validated['user_id']],
             [
@@ -449,7 +441,7 @@ class OrderController extends Controller
     private function updateTrip(Order $order, array $tripData): void
     {
         $trip = $order->trip;
-        
+
         if ($trip) {
             $trip->update([
                 'destination_country' => $tripData['destination_country'],
@@ -480,7 +472,7 @@ class OrderController extends Controller
             ]);
         }
     }
-    
+
     /**
      * Normalize order.metadata to an array (handles array cast and legacy JSON strings).
      *
@@ -659,4 +651,3 @@ class OrderController extends Controller
         return is_array($value) ? $value : [];
     }
 }
-

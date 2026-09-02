@@ -2,8 +2,8 @@
 
 namespace Tests\Unit;
 
-use App\Services\VodacomBalanceService;
-use App\Services\VodacomSimManagerService;
+use App\Services\Esim\VodacomBalanceService;
+use App\Services\Esim\VodacomSimManagerService;
 use GuzzleHttp\Psr7\Response as Psr7Response;
 use Illuminate\Http\Client\Response;
 use Tests\TestCase;

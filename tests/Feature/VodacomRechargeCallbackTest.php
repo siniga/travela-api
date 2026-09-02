@@ -7,7 +7,7 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\User;
 use App\Models\UserEsim;
-use App\Services\VodacomBalanceService;
+use App\Services\Esim\VodacomBalanceService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -114,7 +114,7 @@ class VodacomRechargeCallbackTest extends TestCase
         ]);
 
         $order = Order::create([
-            'draft_id' => 'DRAFT-CB-' . uniqid(),
+            'draft_id' => 'DRAFT-CB-'.uniqid(),
             'user_id' => $user->id,
             'status' => 'paid',
             'payment_status' => 'paid',

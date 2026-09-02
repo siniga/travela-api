@@ -9,15 +9,15 @@ use App\Models\CountryProvider;
 use App\Models\Esim;
 use App\Models\Order;
 use App\Models\OrderItem;
-use App\Models\Payment;
 use App\Models\Provider;
 use App\Models\User;
 use App\Models\UserEsim;
-use App\Services\OrderRechargeService;
-use App\Services\PaymentProcessingService;
-use App\Services\VodacomBalanceService;
-use App\Services\VodacomSimManagerService;
+use App\Services\Esim\OrderRechargeService;
+use App\Services\Esim\VodacomBalanceService;
+use App\Services\Esim\VodacomSimManagerService;
+use App\Services\EvPay\EvPayCheckoutService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -87,23 +87,13 @@ class OrderRechargeTest extends TestCase
     public function test_evpay_paid_callback_triggers_recharge(): void
     {
         [$order] = $this->createPaidOrderFixture(pending: true);
-        $order->payment_reference = 'PAY-TEST-001';
+        $order->payment_reference = 'ORD-20260519-001';
         $order->payment_status = 'pending';
         $order->status = 'pending_payment';
+        $order->currency = 'USD';
+        $order->total_amount = 50;
+        $order->subtotal = 50;
         $order->save();
-
-        $payment = Payment::create([
-            'request_id' => 'PAY-TEST-001',
-            'user_id' => $order->user_id,
-            'order_id' => $order->id,
-            'provider' => 'evpay',
-            'payment_method' => 'mobile_money',
-            'operator' => 'Mpesa',
-            'phone_number' => '255712345678',
-            'amount' => 5000,
-            'currency' => 'TZS',
-            'status' => 'PENDING',
-        ]);
 
         $this->mockBalanceRefresh();
         $this->mock(VodacomSimManagerService::class, function ($mock) {
@@ -113,18 +103,32 @@ class OrderRechargeTest extends TestCase
                 ->andReturn(Http::response(['status' => 'SUCCESS', 'transaction_id' => 'tx-1'], 200));
         });
 
-        app(PaymentProcessingService::class)->applyProviderUpdate($payment, [
-            'id' => 'E110526AC14K7X2M9',
-            'orderReference' => 'PAY-TEST-001',
-            'status' => 'SUCCESS',
-            'description' => 'Customer paid',
-        ], 'payment.succeeded');
+        $t = (string) time();
+        $rawBody = json_encode([
+            'event' => 'payment.succeeded',
+            'timestamp' => (int) $t,
+            'data' => [
+                'id' => 'pay-123',
+                'orderReference' => 'ORD-20260519-001',
+                'status' => 'SUCCESS',
+                'amount' => 50,
+                'currency' => 'USD',
+            ],
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $signature = hash_hmac('sha256', $t.'.'.$rawBody, (string) config('services.evpay.signing_key'));
 
+        $request = Request::create('/api/payments/evpay/callback', 'POST', [], [], [], [
+            'CONTENT_TYPE' => 'application/json',
+            'HTTP_X_EVPAY_SIGNATURE' => 't='.$t.',v1='.$signature,
+            'HTTP_X_EVPAY_EVENT' => 'payment.succeeded',
+            'HTTP_X_EVPAY_DELIVERY' => 'del-recharge-1',
+        ], $rawBody);
+
+        $result = app(EvPayCheckoutService::class)->handleWebhook($request);
+
+        $this->assertSame('OK', $result['status']);
         $order->refresh();
-        $payment->refresh();
         $this->assertSame('paid', $order->payment_status);
-        $this->assertSame('SUCCESS', $payment->status);
-        $this->assertNotNull($payment->fulfilled_at);
 
         $item = $order->orderItems()->first();
         $item->refresh();
@@ -288,7 +292,7 @@ class OrderRechargeTest extends TestCase
         }
 
         $order = Order::create([
-            'draft_id' => 'DRAFT-TEST-' . uniqid(),
+            'draft_id' => 'DRAFT-TEST-'.uniqid(),
             'user_id' => $user->id,
             'status' => $pending ? 'pending_payment' : 'paid',
             'payment_status' => $pending ? 'pending' : 'paid',

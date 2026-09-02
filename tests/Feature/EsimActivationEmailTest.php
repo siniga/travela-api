@@ -7,9 +7,9 @@ use App\Models\Esim;
 use App\Models\Order;
 use App\Models\User;
 use App\Models\UserEsim;
-use App\Services\EsimActivationEmailService;
-use App\Services\QrCode\LpaQrCodeGenerator;
-use App\Services\SimAssignmentService;
+use App\Services\Esim\EsimActivationEmailService;
+use App\Services\Esim\QrCode\LpaQrCodeGenerator;
+use App\Services\Esim\SimAssignmentService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
@@ -20,7 +20,7 @@ class EsimActivationEmailTest extends TestCase
 
     public function test_lpa_qr_generator_normalizes_payload_without_prefix(): void
     {
-        $generator = new LpaQrCodeGenerator();
+        $generator = new LpaQrCodeGenerator;
 
         $this->assertSame(
             'LPA:1$smdp.example.com$ACTIVATION-CODE',
@@ -34,7 +34,7 @@ class EsimActivationEmailTest extends TestCase
             $this->markTestSkipped('GD extension is required to generate QR images.');
         }
 
-        $generator = new LpaQrCodeGenerator();
+        $generator = new LpaQrCodeGenerator;
         $dataUri = $generator->pngDataUri('LPA:1$smdp.example.com$ACTIVATION-CODE');
 
         $this->assertIsString($dataUri);

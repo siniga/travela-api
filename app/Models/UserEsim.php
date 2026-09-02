@@ -2,8 +2,8 @@
 
 namespace App\Models;
 
-use App\Services\PhysicalSimIssuanceService;
-use App\Services\UserEsimOrderLinkService;
+use App\Services\Esim\PhysicalSimIssuanceService;
+use App\Services\Esim\UserEsimOrderLinkService;
 use Illuminate\Database\Eloquent\Model;
 
 class UserEsim extends Model
@@ -30,13 +30,13 @@ class UserEsim extends Model
     ];
 
     protected $casts = [
-        'balance'              => 'decimal:2',
-        'balance_fetched_at'   => 'datetime',
-        'balances'             => 'array',
+        'balance' => 'decimal:2',
+        'balance_fetched_at' => 'datetime',
+        'balances' => 'array',
         'last_recharge_amount' => 'decimal:2',
-        'last_recharged_at'    => 'datetime',
-        'physical_issued_at'   => 'datetime',
-        'device_activated_at'  => 'datetime',
+        'last_recharged_at' => 'datetime',
+        'physical_issued_at' => 'datetime',
+        'device_activated_at' => 'datetime',
         'activation_email_sent_at' => 'datetime',
     ];
 
@@ -101,4 +101,3 @@ class UserEsim extends Model
         return array_merge($data, app(PhysicalSimIssuanceService::class)->issuancePayload($this));
     }
 }
-

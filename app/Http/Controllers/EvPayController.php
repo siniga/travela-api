@@ -3,19 +3,23 @@
 namespace App\Http\Controllers;
 
 use App\Models\Order;
-use App\Services\EvPayService;
+use App\Services\EvPay\EvPayCheckoutService;
+use App\Services\EvPay\EvPayWebhookException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use RuntimeException;
 
 class EvPayController extends Controller
 {
-    public function __construct(private readonly EvPayService $evpay)
-    {
-    }
+    public function __construct(private readonly EvPayCheckoutService $evpay) {}
 
     public function preparePayment(Request $request, $orderId)
     {
         $order = Order::findOrFail($orderId);
+
+        if ($denied = $this->denyUnlessOrderOwner($request, $order)) {
+            return $denied;
+        }
 
         if ($order->payment_status === 'paid') {
             return response()->json(['message' => 'This order is already paid.'], 400);
@@ -35,31 +39,52 @@ class EvPayController extends Controller
     {
         $order = Order::with('user')->findOrFail($orderId);
 
+        if ($denied = $this->denyUnlessOrderOwner($request, $order)) {
+            return $denied;
+        }
+
         if ($order->payment_status === 'paid') {
             return response()->json([
                 'message' => 'This order is already paid.',
             ], 400);
         }
+
         try {
-            return response()->json($this->evpay->createCheckoutUrl($order));
-        } catch (\Throwable $e) {
+            return response()->json($this->evpay->startCardPayment($order));
+        } catch (RuntimeException $e) {
             return response()->json([
                 'message' => $e->getMessage(),
-            ], 500);
+            ], 422);
         }
     }
 
     public function callback(Request $request): JsonResponse
     {
-        $result = $this->evpay->handleCallback($request);
+        try {
+            return response()->json($this->evpay->handleWebhook($request));
+        } catch (EvPayWebhookException $e) {
+            return response()->json([
+                'status' => 'ERROR',
+                'message' => $e->getMessage(),
+            ], $e->status);
+        }
+    }
 
-        $status = match (true) {
-            ! ($result['success'] ?? false) && str_contains($result['message'] ?? '', 'signature') => 403,
-            ! ($result['success'] ?? false) && str_contains($result['message'] ?? '', 'not found') => 404,
-            ! ($result['success'] ?? false) => 422,
-            default => 200,
-        };
+    private function denyUnlessOrderOwner(Request $request, Order $order): ?JsonResponse
+    {
+        $user = $request->user();
+        if (! $user) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
 
-        return response()->json($result, $status);
+        if ($user->isAdmin() || $user->isAgent()) {
+            return null;
+        }
+
+        if ((int) $order->user_id !== (int) $user->id) {
+            return response()->json(['message' => 'This order does not belong to you.'], 403);
+        }
+
+        return null;
     }
 }

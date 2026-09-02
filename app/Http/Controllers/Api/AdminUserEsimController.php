@@ -4,11 +4,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Esim;
+use App\Models\Order;
 use App\Models\User;
 use App\Models\UserEsim;
-use App\Models\Order;
-use App\Services\UserEsimOrderLinkService;
-use App\Services\VodacomSimManagerService;
+use App\Services\Esim\UserEsimOrderLinkService;
+use App\Services\Esim\VodacomSimManagerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -17,8 +17,7 @@ class AdminUserEsimController extends Controller
     public function __construct(
         private readonly VodacomSimManagerService $vodacom,
         private readonly UserEsimOrderLinkService $esimOrderLink,
-    ) {
-    }
+    ) {}
 
     /**
      * Return every user with a count of how many eSIMs they hold on the platform.
@@ -30,9 +29,9 @@ class AdminUserEsimController extends Controller
             ->orderByDesc('esims_count')
             ->get()
             ->map(fn (User $u) => [
-                'user_id'    => $u->id,
-                'name'       => $u->name,
-                'email'      => $u->email,
+                'user_id' => $u->id,
+                'name' => $u->name,
+                'email' => $u->email,
                 'esim_count' => $u->esims_count,
             ]);
 
@@ -110,6 +109,7 @@ class AdminUserEsimController extends Controller
         }
 
         $esim->delete();
+
         return response()->json(['message' => 'Deleted']);
     }
 
@@ -133,4 +133,3 @@ class AdminUserEsimController extends Controller
             ->header('Content-Type', $contentType ?: 'application/json');
     }
 }
-

@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Services\ResendMailConfigurator;
+use App\Services\Email\ResendMailConfigurator;
 use Illuminate\Support\Facades\Cache;
 use Tests\TestCase;
 
@@ -20,7 +20,7 @@ class ResendMailConfiguratorTest extends TestCase
             ->once()
             ->andReturn(['thetravela.com']);
 
-        $configurator = new ResendMailConfigurator();
+        $configurator = new ResendMailConfigurator;
 
         $this->assertSame('noreply@thetravela.com', $configurator->resolvedFromAddress());
     }
@@ -37,7 +37,7 @@ class ResendMailConfiguratorTest extends TestCase
             ->once()
             ->andReturn(['thetravela.com']);
 
-        $configurator = new ResendMailConfigurator();
+        $configurator = new ResendMailConfigurator;
 
         $this->assertSame('noreply@thetravela.com', $configurator->resolvedFromAddress());
     }

@@ -7,12 +7,12 @@ use App\Http\Requests\MeEsimRechargeRequest;
 use App\Models\Esim;
 use App\Models\Order;
 use App\Models\UserEsim;
-use App\Services\OrderRechargeService;
-use App\Services\SimAssignmentService;
-use App\Services\UserEsimOrderLinkService;
-use App\Services\VodacomBalanceService;
-use App\Services\VodacomRechargePayload;
-use App\Services\VodacomSimManagerService;
+use App\Services\Esim\OrderRechargeService;
+use App\Services\Esim\SimAssignmentService;
+use App\Services\Esim\UserEsimOrderLinkService;
+use App\Services\Esim\VodacomBalanceService;
+use App\Services\Esim\VodacomRechargePayload;
+use App\Services\Esim\VodacomSimManagerService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,8 +26,7 @@ class UserEsimController extends Controller
         private readonly UserEsimOrderLinkService $esimOrderLink,
         private readonly SimAssignmentService $simAssignment,
         private readonly VodacomBalanceService $balances,
-    ) {
-    }
+    ) {}
 
     public function index(Request $request)
     {
@@ -356,6 +355,7 @@ class UserEsimController extends Controller
         $esim = $this->requireOwnedEsim($request, $data['msisdn']);
 
         $query = array_filter($request->only(['msisdn', 'start_date', 'end_date', 'page', 'page_size']), fn ($v) => $v !== null && $v !== '');
+
         return $this->proxy($this->vodacom->get('/api/recharge', $query));
     }
 
@@ -372,6 +372,7 @@ class UserEsimController extends Controller
         $esim = $this->requireOwnedEsim($request, $data['msisdn']);
 
         $query = array_filter($request->only(['msisdn', 'start_date', 'end_date', 'page', 'page_size']), fn ($v) => $v !== null && $v !== '');
+
         return $this->proxy($this->vodacom->get('/api/usage', $query));
     }
 
@@ -388,6 +389,7 @@ class UserEsimController extends Controller
         $esim = $this->requireOwnedEsim($request, $data['msisdn']);
 
         $query = array_filter($request->only(['msisdn', 'start_date', 'end_date', 'page', 'page_size']), fn ($v) => $v !== null && $v !== '');
+
         return $this->proxy($this->vodacom->get('/api/usage-details', $query));
     }
 
@@ -555,4 +557,3 @@ class UserEsimController extends Controller
         return $data !== null && $data !== '';
     }
 }
-

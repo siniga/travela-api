@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Esim;
-use App\Services\QrCode\QrImageValidator;
+use App\Services\Esim\QrCode\QrImageValidator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -76,7 +76,7 @@ class EsimController extends Controller
             ], 404);
         }
 
-        $validator = new QrImageValidator();
+        $validator = new QrImageValidator;
         $mime = $validator->mimeType($binary);
         if ($mime === null) {
             return response()->json([

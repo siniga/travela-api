@@ -6,10 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\Esim;
 use App\Models\Order;
 use App\Models\UserEsim;
-use App\Services\OrderRechargeService;
-use App\Services\PhysicalSimIssuanceService;
-use App\Services\SimAssignmentService;
-use App\Services\WalkInPhysicalSimService;
+use App\Services\Esim\OrderRechargeService;
+use App\Services\Esim\PhysicalSimIssuanceService;
+use App\Services\Esim\SimAssignmentService;
+use App\Services\Esim\WalkInPhysicalSimService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -23,8 +23,7 @@ class PhysicalSimIssuanceController extends Controller
         private readonly SimAssignmentService $simAssignment,
         private readonly OrderRechargeService $orderRecharge,
         private readonly WalkInPhysicalSimService $walkInPhysicalSim,
-    ) {
-    }
+    ) {}
 
     /**
      * Agent assigns a paid physical order to a specific ICCID from inventory.

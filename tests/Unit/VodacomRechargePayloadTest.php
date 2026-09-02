@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Services\VodacomRechargePayload;
+use App\Services\Esim\VodacomRechargePayload;
 use Tests\TestCase;
 
 class VodacomRechargePayloadTest extends TestCase

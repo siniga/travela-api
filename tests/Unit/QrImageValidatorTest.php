@@ -2,14 +2,14 @@
 
 namespace Tests\Unit;
 
-use App\Services\QrCode\QrImageValidator;
+use App\Services\Esim\QrCode\QrImageValidator;
 use Tests\TestCase;
 
 class QrImageValidatorTest extends TestCase
 {
     public function test_rejects_non_image_binary(): void
     {
-        $validator = new QrImageValidator();
+        $validator = new QrImageValidator;
 
         $this->assertFalse($validator->isValid('not-an-image'));
         $this->assertNull($validator->normalizeForStorage(str_repeat('x', 1024)));
@@ -17,7 +17,7 @@ class QrImageValidatorTest extends TestCase
 
     public function test_accepts_png_magic_bytes(): void
     {
-        $validator = new QrImageValidator();
+        $validator = new QrImageValidator;
         $png = "\x89PNG\r\n\x1a\n".str_repeat("\0", 32);
 
         $this->assertTrue($validator->isValid($png));
@@ -31,7 +31,7 @@ class QrImageValidatorTest extends TestCase
 
     public function test_accepts_jpeg_magic_bytes(): void
     {
-        $validator = new QrImageValidator();
+        $validator = new QrImageValidator;
         $jpeg = "\xFF\xD8\xFF\xE0".str_repeat("\0", 32);
 
         $this->assertTrue($validator->isValid($jpeg));
