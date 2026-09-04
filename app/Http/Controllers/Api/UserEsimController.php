@@ -214,11 +214,21 @@ class UserEsimController extends Controller
         $latestPaid = $this->esimOrderLink->latestPaidOrderWithBundles($userId);
 
         if (! $latestPaid) {
+            $pendingOrder = Order::query()
+                ->where('user_id', $userId)
+                ->where(function ($q) {
+                    $q->whereIn('payment_status', ['pending', 'pending_payment'])
+                        ->orWhere('status', 'pending_payment');
+                })
+                ->orderByDesc('id')
+                ->first();
+
             return response()->json([
                 'success' => false,
                 'status' => 'payment_required',
                 'has_sim' => false,
-                'poll_again' => false,
+                'poll_again' => $pendingOrder !== null,
+                'retry_after_seconds' => $pendingOrder ? 5 : 0,
                 'message' => 'Complete payment before a SIM can be assigned.',
                 'latest_order' => $latestOrder,
                 'data' => null,
@@ -230,7 +240,8 @@ class UserEsimController extends Controller
                 'success' => false,
                 'status' => 'payment_required',
                 'has_sim' => false,
-                'poll_again' => false,
+                'poll_again' => true,
+                'retry_after_seconds' => 5,
                 'message' => 'Complete payment before a SIM can be assigned.',
                 'latest_order' => $latestOrder,
                 'data' => null,
@@ -256,7 +267,7 @@ class UserEsimController extends Controller
             'status' => 'waiting_for_inventory',
             'has_sim' => false,
             'poll_again' => true,
-            'retry_after_seconds' => 300,
+            'retry_after_seconds' => 5,
             'message' => $available > 0
                 ? 'Payment complete. Call POST /me/esims/register to assign your eSIM.'
                 : 'Payment complete but no eSIM numbers available yet. Keep polling.',
@@ -283,7 +294,13 @@ class UserEsimController extends Controller
             $existing = $this->esimOrderLink->ensureAssignmentLinked($existing);
             $existing->loadMissing(['esim', 'bundle.type', 'order', 'orderItem']);
 
-            return $this->registrationResponse($existing, false, 200, 'already_assigned');
+            return $this->registrationResponse(
+                $existing,
+                false,
+                200,
+                'already_assigned',
+                $this->fulfillLatestPaidOrder($userId),
+            );
         }
 
         try {
@@ -311,12 +328,16 @@ class UserEsimController extends Controller
 
             return response()->json([
                 'success' => false,
-                'status' => ($result['reason'] ?? '') === 'no_esim_inventory' ? 'waiting_for_inventory' : 'not_assigned',
+                'status' => match ($result['reason'] ?? '') {
+                    'no_esim_inventory' => 'waiting_for_inventory',
+                    'payment_not_paid' => 'payment_required',
+                    default => 'not_assigned',
+                },
                 'has_sim' => false,
-                'poll_again' => ($result['reason'] ?? '') === 'no_esim_inventory',
-                'retry_after_seconds' => 300,
+                'poll_again' => in_array($result['reason'] ?? '', ['no_esim_inventory', 'payment_not_paid'], true),
+                'retry_after_seconds' => 5,
                 'message' => match ($result['reason'] ?? '') {
-                    'no_esim_inventory' => 'No eSIM numbers available yet. Retry in a few minutes.',
+                    'no_esim_inventory' => 'No eSIM numbers available yet. Retry shortly.',
                     'payment_not_paid' => 'Complete payment before a SIM can be assigned.',
                     default => 'SIM could not be assigned.',
                 },
@@ -437,7 +458,7 @@ class UserEsimController extends Controller
             'message' => $created ? 'SIM assigned successfully' : 'SIM already assigned',
             'data' => $assignment->toAssignmentArray(),
             'latest_order' => $this->esimOrderLink->latestOrderForUser((int) $assignment->user_id),
-            'recharge' => $recharge ?? ($created ? $this->fulfillLatestPaidOrder($assignment->user_id) : null),
+            'recharge' => $recharge ?? $this->fulfillLatestPaidOrder((int) $assignment->user_id),
         ], $status);
     }
 
@@ -478,7 +499,7 @@ class UserEsimController extends Controller
             })
             ->where(function ($q) {
                 $q->whereNull('recharge_status')
-                    ->orWhereIn('recharge_status', ['pending_esim', 'pending_retry', 'in_progress', 'failed']);
+                    ->orWhereIn('recharge_status', ['pending_esim', 'pending_retry', 'failed']);
             })
             ->orderByDesc('id')
             ->first();

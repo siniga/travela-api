@@ -259,14 +259,17 @@ class SimAssignmentService
 
     /**
      * Self-service fallback for eSIM orders only (paid + simType esim).
+     * Assigns inventory if needed and recharges Vodacom on the same call.
      */
     public function assignEsimForUserIfEligible(int $userId): array
     {
         $order = $this->esimOrderLink->latestPaidOrderWithBundles($userId);
         if (! $order) {
-            throw ValidationException::withMessages([
-                'payment' => ['No paid order found. Complete payment before requesting a SIM.'],
-            ]);
+            return [
+                'assigned' => false,
+                'sim_type' => Esim::SIM_TYPE_ESIM,
+                'reason' => 'payment_not_paid',
+            ];
         }
 
         if ($this->orderSimType($order) === Esim::SIM_TYPE_PHYSICAL) {
@@ -281,7 +284,7 @@ class SimAssignmentService
             ]);
         }
 
-        return $this->assignForPaidOrder($order);
+        return $this->fulfillPaidOrder($order);
     }
 
     public function findAssignmentForOrder(Order $order): ?UserEsim
