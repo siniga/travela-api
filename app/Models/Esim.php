@@ -94,6 +94,8 @@ class Esim extends Model
             'network_id' => $this->network_id,
             'qr_code_data' => $qrCodeData !== '' ? $qrCodeData : null,
             'has_activation_data' => $qrCodeData !== '',
+            'balances' => is_array($this->balances) ? $this->balances : null,
+            'balance_fetched_at' => $this->balance_fetched_at?->toIso8601String(),
         ];
     }
 

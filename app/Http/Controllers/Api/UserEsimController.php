@@ -170,8 +170,7 @@ class UserEsimController extends Controller
                 continue;
             }
 
-            $fetchedAt = $assignment->balance_fetched_at;
-            $balances = is_array($assignment->balances) ? $assignment->balances : null;
+            [$fetchedAt, $balances] = $this->latestStoredBalances($assignment, $esim);
 
             if ($this->balanceIsFresh($fetchedAt, $since, $balances)) {
                 $assignment = $this->esimOrderLink->ensureAssignmentLinked($assignment);
@@ -540,6 +539,24 @@ class UserEsimController extends Controller
     }
 
     /**
+     * Prefer the newest stored snapshot on the assignment or inventory row.
+     *
+     * @return array{0: ?Carbon, 1: array<string, mixed>}
+     */
+    private function latestStoredBalances(UserEsim $assignment, Esim $esim): array
+    {
+        $assignmentFetched = $assignment->balance_fetched_at;
+        $esimFetched = $esim->balance_fetched_at;
+        $useEsim = $esimFetched && (! $assignmentFetched || $esimFetched->gt($assignmentFetched));
+
+        $balances = $useEsim
+            ? (is_array($esim->balances) ? $esim->balances : [])
+            : (is_array($assignment->balances) ? $assignment->balances : []);
+
+        return [$useEsim ? $esimFetched : $assignmentFetched, $balances];
+    }
+
+    /**
      * @param  mixed  $balances
      */
     private function balanceIsFresh(?Carbon $fetchedAt, Carbon $since, $balances): bool
@@ -548,12 +565,21 @@ class UserEsimController extends Controller
             return false;
         }
 
-        if (! is_array($balances)) {
+        if (! is_array($balances) || $balances === []) {
             return false;
         }
 
-        $data = $balances['DATA'] ?? $balances['data'] ?? null;
+        foreach (['DATA', 'data', 'AIRTIME', 'airtime', 'SMS', 'sms'] as $key) {
+            if (! array_key_exists($key, $balances)) {
+                continue;
+            }
 
-        return $data !== null && $data !== '';
+            $value = $balances[$key];
+            if ($value !== null && $value !== '') {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

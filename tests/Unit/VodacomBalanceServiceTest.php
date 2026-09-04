@@ -41,6 +41,24 @@ class VodacomBalanceServiceTest extends TestCase
         $this->assertSame('queued', $result['status']);
     }
 
+    public function test_extracts_wrapped_and_lowercase_balance_records(): void
+    {
+        $service = app(VodacomBalanceService::class);
+        $method = new \ReflectionMethod(VodacomBalanceService::class, 'extractBalanceRecords');
+        $method->setAccessible(true);
+
+        $wrapped = $method->invoke($service, [
+            'data' => [
+                'msisdn' => '255793045340',
+                'balances' => ['data' => 1024, 'airtime' => 0],
+            ],
+        ]);
+
+        $this->assertCount(1, $wrapped);
+        $this->assertSame('255793045340', $wrapped[0]['msisdn']);
+        $this->assertSame(['data' => 1024, 'airtime' => 0], $wrapped[0]['balances']);
+    }
+
     private function queuedResponse(): Response
     {
         return new Response(new Psr7Response(

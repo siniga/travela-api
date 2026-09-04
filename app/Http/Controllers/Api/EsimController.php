@@ -295,42 +295,34 @@ class EsimController extends Controller
     {
         Log::info('Vodacom sims-balances callback received', $this->callbackLogContext($request));
 
-        try {
-            $validated = $request->validate([
-                'msisdn' => 'required|string',
-                'balances' => 'required_without:balance|array',
-                'balances.AIRTIME' => 'nullable|numeric',
-                'balances.DATA' => 'nullable|numeric',
-                'balances.SMS' => 'nullable|numeric',
-                'balance' => 'required_without:balances|numeric',
-                'currency' => 'sometimes|string|max:10',
-            ]);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            Log::warning('Vodacom sims-balances callback validation failed', [
-                'errors' => $e->errors(),
-                'body' => $request->all(),
-            ]);
-
-            throw $e;
+        $raw = $request->all();
+        if ($raw === []) {
+            $decoded = json_decode((string) $request->getContent(), true);
+            $raw = is_array($decoded) ? $decoded : [];
         }
 
-        $result = $this->balances->applyPayload($validated);
+        $synced = $this->balances->syncFromVodacomPayload($raw);
 
-        if (! $result) {
-            Log::warning('Vodacom sims-balances callback: SIM not in inventory', [
-                'msisdn' => $validated['msisdn'],
+        if ($synced === []) {
+            Log::warning('Vodacom sims-balances callback: payload not applied', [
+                'body' => $raw,
             ]);
 
-            return response()->json(['success' => false, 'message' => 'SIM not found in inventory'], 404);
+            return response()->json([
+                'success' => false,
+                'message' => 'Balance payload was not recognized or SIM not found in inventory',
+            ], 422);
         }
 
-        Log::info('Vodacom sims-balances callback processed', $result);
+        $first = $synced[0];
+        Log::info('Vodacom sims-balances callback processed', ['synced' => $synced]);
 
         return response()->json([
             'success' => true,
             'message' => 'Balance updated',
-            'esim_id' => $result['esim_id'],
-            'assignment_updated' => $result['assignment_updated'],
+            'esim_id' => $first['esim_id'],
+            'assignment_updated' => $first['assignment_updated'],
+            'synced' => $synced,
         ]);
     }
 

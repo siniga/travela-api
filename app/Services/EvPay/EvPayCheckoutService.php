@@ -2,8 +2,9 @@
 
 namespace App\Services\EvPay;
 
-use App\Jobs\FulfillPaidOrderJob;
+use App\Models\Esim;
 use App\Models\Order;
+use App\Services\Esim\SimAssignmentService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -21,6 +22,7 @@ class EvPayCheckoutService
 
     public function __construct(
         private readonly EvPayClientService $client,
+        private readonly SimAssignmentService $simAssignment,
     ) {}
 
     public function prepare(Order $order): Order
@@ -218,7 +220,10 @@ class EvPayCheckoutService
 
         if ($shouldFulfill) {
             try {
-                FulfillPaidOrderJob::dispatch($order->id, $fulfillContext);
+                $paidOrder = Order::query()->find($order->id);
+                if ($paidOrder && $paidOrder->payment_status === 'paid') {
+                    $this->simAssignment->fulfillPaidOrder($paidOrder, $fulfillContext);
+                }
             } catch (\Throwable $e) {
                 Log::error('Order fulfillment failed after EvPay webhook', [
                     'order_id' => $order->id,
@@ -256,7 +261,7 @@ class EvPayCheckoutService
             'details' => [
                 'amount' => $amount,
                 'currency' => self::CHARGE_CURRENCY,
-                'redirectUrl' => rtrim((string) config('services.evpay.redirect_url'), '/'),
+                'redirectUrl' => $this->customerReturnUrl($order),
                 'cancelUrl' => rtrim((string) config('services.evpay.cancel_url'), '/'),
             ],
             'customer' => [
@@ -294,6 +299,37 @@ class EvPayCheckoutService
                 throw new RuntimeException('EvPay configuration is incomplete: '.$name.' is missing.');
             }
         }
+    }
+
+    /**
+     * After card payment EvPay sends the customer here. Query flags start dashboard balance polling
+     * even when the return tab has empty sessionStorage.
+     */
+    private function customerReturnUrl(Order $order): string
+    {
+        $base = rtrim((string) config('services.evpay.redirect_url'), '/');
+        $query = ['await_balance' => '1'];
+
+        $order->loadMissing('orderItems');
+        $meta = is_array($order->metadata) ? $order->metadata : [];
+        $msisdn = $meta['msisdn'] ?? null;
+        if (is_string($msisdn) && trim($msisdn) !== '') {
+            $query['msisdn'] = Esim::normalizeMsisdn($msisdn);
+        }
+
+        $purchasedMb = 0;
+        foreach ($order->orderItems as $item) {
+            if (is_numeric($item->data_amount)) {
+                $purchasedMb += (int) $item->data_amount;
+            }
+        }
+        if ($purchasedMb > 0) {
+            $query['purchased_mb'] = (string) $purchasedMb;
+        }
+
+        $separator = str_contains($base, '?') ? '&' : '?';
+
+        return $base.$separator.http_build_query($query);
     }
 
     /**
