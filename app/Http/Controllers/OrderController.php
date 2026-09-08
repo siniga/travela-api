@@ -38,6 +38,8 @@ class OrderController extends Controller
 
     public function myOrders(Request $request): JsonResponse
     {
+        $this->evpay->reconcilePendingOrdersForUser((int) $request->user()->id);
+
         $orders = Order::with(['trip', 'orderItems.bundle', 'kyc'])
             ->where('user_id', $request->user()->id)
             ->orderByDesc('id')

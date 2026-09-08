@@ -399,6 +399,79 @@ class EvPayRestCheckoutTest extends TestCase
         $this->assertNotNull($order->paid_at);
     }
 
+    public function test_missed_webhook_is_reconciled_from_evpay_status_on_orders_list(): void
+    {
+        $this->mock(SimAssignmentService::class, function ($mock) {
+            $mock->shouldReceive('fulfillPaidOrder')->once();
+        });
+
+        $order = $this->makePendingOrder(50);
+        $order->gateway_payment_id = '01M20M1S3G0YWJ10P185HSBNNM';
+        $order->save();
+
+        Http::fake([
+            'https://api-uat.evpay.co.tz/api/auth/v1' => Http::response([
+                'data' => [
+                    'accessToken' => 'tok-abc',
+                    'expiresIn' => 36000,
+                ],
+            ], 200),
+            'https://api-uat.evpay.co.tz/api/v1/payment/*' => Http::response([
+                'status' => 'SUCCESS',
+                'data' => [
+                    'id' => '01M20M1S3G0YWJ10P185HSBNNM',
+                    'orderReference' => $order->payment_reference,
+                    'status' => 'SUCCESS',
+                    'amount' => 50,
+                    'currency' => 'USD',
+                ],
+            ], 200),
+        ]);
+
+        Sanctum::actingAs($order->user);
+
+        $this->getJson('/api/me/orders')
+            ->assertOk()
+            ->assertJsonPath('data.0.payment_status', 'paid')
+            ->assertJsonPath('data.0.status', 'paid');
+
+        $this->assertNotNull($order->fresh()->paid_at);
+    }
+
+    public function test_reconcile_leaves_order_pending_when_evpay_still_pending(): void
+    {
+        $this->mock(SimAssignmentService::class, function ($mock) {
+            $mock->shouldReceive('fulfillPaidOrder')->never();
+        });
+
+        $order = $this->makePendingOrder(50);
+        $order->gateway_payment_id = 'evpay-pending-1';
+        $order->save();
+
+        Http::fake([
+            'https://api-uat.evpay.co.tz/api/auth/v1' => Http::response([
+                'data' => [
+                    'accessToken' => 'tok-abc',
+                    'expiresIn' => 36000,
+                ],
+            ], 200),
+            'https://api-uat.evpay.co.tz/api/v1/payment/*' => Http::response([
+                'status' => 'PENDING',
+                'data' => [
+                    'id' => 'evpay-pending-1',
+                    'status' => 'PENDING',
+                    'amount' => 50,
+                    'currency' => 'USD',
+                ],
+            ], 200),
+        ]);
+
+        app(EvPayCheckoutService::class)->reconcilePendingOrder($order);
+
+        $this->assertSame('pending', $order->fresh()->payment_status);
+        $this->assertNull($order->fresh()->paid_at);
+    }
+
     private function fakeEvPayCardCreate(): void
     {
         Http::fake([

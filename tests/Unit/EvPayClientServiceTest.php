@@ -117,4 +117,38 @@ class EvPayClientServiceTest extends TestCase
 
         app(EvPayClientService::class)->createCardPayment(['amount' => '1']);
     }
+
+    public function test_get_payment_signs_get_request(): void
+    {
+        Cache::put('evpay_access_token', 'tok-abc', 60);
+
+        Http::fake([
+            'https://api-uat.evpay.co.tz/api/v1/payment/pay-1' => Http::response([
+                'status' => 'SUCCESS',
+                'data' => [
+                    'id' => 'pay-1',
+                    'status' => 'SUCCESS',
+                ],
+            ], 200),
+        ]);
+
+        $result = app(EvPayClientService::class)->getPayment('pay-1');
+
+        $this->assertSame('SUCCESS', $result['status']);
+
+        Http::assertSent(function ($request) {
+            if (! str_ends_with($request->url(), '/api/v1/payment/pay-1')) {
+                return false;
+            }
+
+            $timestamp = $request->header('X-Timestamp')[0] ?? '';
+            $signature = $request->header('X-Signature')[0] ?? '';
+            $expected = hash_hmac('sha256', $timestamp.'.', 'test-signing-key');
+
+            return $request->method() === 'GET'
+                && $request->hasHeader('Authorization', 'Bearer tok-abc')
+                && strlen($timestamp) >= 13
+                && hash_equals($expected, $signature);
+        });
+    }
 }

@@ -13,6 +13,7 @@ use App\Services\Esim\UserEsimOrderLinkService;
 use App\Services\Esim\VodacomBalanceService;
 use App\Services\Esim\VodacomRechargePayload;
 use App\Services\Esim\VodacomSimManagerService;
+use App\Services\EvPay\EvPayCheckoutService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,6 +27,7 @@ class UserEsimController extends Controller
         private readonly UserEsimOrderLinkService $esimOrderLink,
         private readonly SimAssignmentService $simAssignment,
         private readonly VodacomBalanceService $balances,
+        private readonly EvPayCheckoutService $evpay,
     ) {}
 
     public function index(Request $request)
@@ -201,6 +203,7 @@ class UserEsimController extends Controller
     public function assignmentStatus(Request $request): JsonResponse
     {
         $userId = $request->user()->id;
+        $this->evpay->reconcilePendingOrdersForUser((int) $userId);
         $existing = $this->findUserAssignment($userId);
 
         if ($existing) {
@@ -287,6 +290,7 @@ class UserEsimController extends Controller
     public function register(Request $request): JsonResponse
     {
         $userId = $request->user()->id;
+        $this->evpay->reconcilePendingOrdersForUser((int) $userId);
 
         $existing = $this->findUserAssignment($userId);
 

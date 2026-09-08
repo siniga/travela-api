@@ -6,6 +6,7 @@ use App\Models\Esim;
 use App\Models\Order;
 use App\Services\Esim\SimAssignmentService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
@@ -122,6 +123,104 @@ class EvPayCheckoutService
 
         $callbackRecord = $this->safeCallbackRecord($request, $payload, $event, $deliveryId);
 
+        return $this->processNotification($order, $data, $event, $deliveryId, $callbackRecord);
+    }
+
+    /**
+     * EvPay docs: if a webhook delivery is missed, poll GET /api/v1/payment/{id}.
+     * Dashboard polling uses this so a completed card payment still marks the order paid.
+     */
+    public function reconcilePendingOrder(Order $order): Order
+    {
+        if ($order->payment_status === 'paid' || $order->status === 'paid') {
+            return $order;
+        }
+
+        if ($order->payment_gateway !== 'evpay') {
+            return $order;
+        }
+
+        $paymentId = trim((string) ($order->gateway_payment_id ?? ''));
+        if ($paymentId === '') {
+            return $order;
+        }
+
+        $lockKey = 'evpay_reconcile_'.$order->id;
+        if (! Cache::add($lockKey, 1, 10)) {
+            return $order;
+        }
+
+        try {
+            $response = $this->client->getPayment($paymentId);
+        } catch (\Throwable $e) {
+            Log::warning('EvPay payment status poll failed', [
+                'order_id' => $order->id,
+                'payment_id' => $paymentId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return $order;
+        }
+
+        $data = $this->paymentDataFromStatusResponse($response);
+        $status = strtoupper((string) ($data['status'] ?? ''));
+        $event = $this->eventFromStatus($status);
+        $deliveryId = 'poll:'.$paymentId.':'.$status;
+
+        try {
+            $this->processNotification($order, $data, $event, $deliveryId, [
+                'received_at' => now()->toIso8601String(),
+                'event' => $event,
+                'delivery_id' => $deliveryId,
+                'source' => 'status_poll',
+                'payload' => $response,
+                'headers' => [],
+            ], false);
+        } catch (EvPayWebhookException $e) {
+            Log::warning('EvPay status poll did not apply to order', [
+                'order_id' => $order->id,
+                'payment_id' => $paymentId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return $order;
+        }
+
+        return $order->fresh() ?? $order;
+    }
+
+    public function reconcilePendingOrdersForUser(int $userId): void
+    {
+        $orders = Order::query()
+            ->where('user_id', $userId)
+            ->where('payment_gateway', 'evpay')
+            ->whereNotNull('gateway_payment_id')
+            ->where(function ($q) {
+                $q->whereIn('payment_status', ['pending', 'pending_payment'])
+                    ->orWhere('status', 'pending_payment');
+            })
+            ->orderByDesc('id')
+            ->limit(5)
+            ->get();
+
+        foreach ($orders as $order) {
+            $this->reconcilePendingOrder($order);
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>  $callbackRecord
+     * @return array{status: string}
+     */
+    private function processNotification(
+        Order $order,
+        array $data,
+        string $event,
+        string $deliveryId,
+        array $callbackRecord,
+        bool $strictMatch = true,
+    ): array {
         if ($deliveryId !== '' && $this->deliveryAlreadyProcessed($order, $deliveryId)) {
             Log::info('EvPay webhook duplicate delivery', [
                 'order_id' => $order->id,
@@ -140,6 +239,7 @@ class EvPayCheckoutService
             $event,
             $callbackRecord,
             $deliveryId,
+            $strictMatch,
             &$shouldFulfill,
             &$fulfillContext,
         ) {
@@ -188,7 +288,7 @@ class EvPayCheckoutService
                 return;
             }
 
-            $this->assertWebhookMatchesOrder($order, $data);
+            $this->assertWebhookMatchesOrder($order, $data, $strictMatch);
 
             $transactionId = trim((string) ($data['id'] ?? ''));
             if ($transactionId !== '' && ! $order->gateway_payment_id) {
@@ -226,6 +326,46 @@ class EvPayCheckoutService
         }
 
         return ['status' => 'OK'];
+    }
+
+    /**
+     * @param  array<string, mixed>  $response
+     * @return array<string, mixed>
+     */
+    private function paymentDataFromStatusResponse(array $response): array
+    {
+        $data = is_array($response['data'] ?? null) ? $response['data'] : [];
+
+        if ($data === []) {
+            $data = $response;
+        }
+
+        if (! isset($data['status']) && isset($response['status'])) {
+            $data['status'] = $response['status'];
+        }
+
+        if (! isset($data['id']) && isset($response['id'])) {
+            $data['id'] = $response['id'];
+        }
+
+        if (! isset($data['id']) && isset($response['data']['reference'])) {
+            $data['id'] = $response['data']['reference'];
+        }
+
+        return is_array($data) ? $data : [];
+    }
+
+    private function eventFromStatus(string $status): string
+    {
+        return match ($status) {
+            'SUCCESS' => 'payment.succeeded',
+            'SETTLED' => 'payment.settled',
+            'FAILED' => 'payment.failed',
+            'ON-HOLD' => 'payment.on_hold',
+            'REFUNDED' => 'payment.refunded',
+            'REVERSED' => 'payment.reversed',
+            default => '',
+        };
     }
 
     /**
@@ -396,14 +536,26 @@ class EvPayCheckoutService
     /**
      * @param  array<string, mixed>  $data
      */
-    private function assertWebhookMatchesOrder(Order $order, array $data): void
+    private function assertWebhookMatchesOrder(Order $order, array $data, bool $strict = true): void
     {
         $currency = strtoupper((string) ($data['currency'] ?? ''));
-        if ($currency !== self::CHARGE_CURRENCY) {
+        if ($currency !== '') {
+            if ($currency !== self::CHARGE_CURRENCY) {
+                throw new EvPayWebhookException('Webhook currency does not match the order.', 422);
+            }
+        } elseif ($strict) {
             throw new EvPayWebhookException('Webhook currency does not match the order.', 422);
         }
 
-        if ($this->amountToCents($data['amount'] ?? 0) !== $this->amountToCents($order->total_amount)) {
+        $hasAmount = array_key_exists('amount', $data)
+            && $data['amount'] !== null
+            && $data['amount'] !== '';
+
+        if ($hasAmount) {
+            if ($this->amountToCents($data['amount']) !== $this->amountToCents($order->total_amount)) {
+                throw new EvPayWebhookException('Webhook amount does not match the order.', 422);
+            }
+        } elseif ($strict) {
             throw new EvPayWebhookException('Webhook amount does not match the order.', 422);
         }
 

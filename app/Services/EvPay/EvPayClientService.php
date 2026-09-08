@@ -101,6 +101,46 @@ class EvPayClientService
     }
 
     /**
+     * Poll EvPay when a webhook delivery was missed.
+     *
+     * @return array<string, mixed>
+     */
+    public function getPayment(string $paymentId): array
+    {
+        $id = trim($paymentId);
+        if ($id === '') {
+            throw new RuntimeException('EvPay payment id is missing.');
+        }
+
+        $token = $this->getAccessToken();
+        $rawBody = '';
+        $timestamp = (string) floor(microtime(true) * 1000);
+        $signature = $this->generateSignature($timestamp, $rawBody);
+
+        $response = Http::baseUrl($this->baseUrl())
+            ->withToken($token)
+            ->acceptJson()
+            ->timeout(15)
+            ->withHeaders([
+                'X-Timestamp' => $timestamp,
+                'X-Signature' => $signature,
+            ])
+            ->get('/api/v1/payment/'.rawurlencode($id));
+
+        if (! $response->successful()) {
+            throw new RuntimeException(
+                'EvPay payment status failed with HTTP '
+                .$response->status().': '
+                .$response->json('message', 'Unknown EvPay error')
+            );
+        }
+
+        $json = $response->json();
+
+        return is_array($json) ? $json : [];
+    }
+
+    /**
      * Verify an inbound EvPay webhook using the raw body and X-EvPay-Signature.
      *
      * @return array<string, mixed>
