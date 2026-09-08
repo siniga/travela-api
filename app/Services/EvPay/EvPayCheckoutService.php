@@ -111,22 +111,14 @@ class EvPayCheckoutService
         $event = (string) ($payload['event'] ?? $request->header('X-EvPay-Event') ?? '');
         $deliveryId = trim((string) ($request->header('X-EvPay-Delivery') ?? ''));
         $data = is_array($payload['data'] ?? null) ? $payload['data'] : [];
-        $orderReference = trim((string) ($data['orderReference'] ?? ''));
+        $order = $this->findOrderForWebhook($data);
 
         Log::info('EvPay webhook received', [
             'event' => $event,
             'delivery_id' => $deliveryId !== '' ? $deliveryId : null,
-            'order_reference' => $orderReference !== '' ? $orderReference : null,
+            'order_id' => $order->id,
+            'order_reference' => $order->payment_reference,
         ]);
-
-        if ($orderReference === '') {
-            throw new EvPayWebhookException('Missing payment reference in webhook.', 422);
-        }
-
-        $order = Order::where('payment_reference', $orderReference)->first();
-        if (! $order) {
-            throw new EvPayWebhookException('Order not found for reference: '.$orderReference, 404);
-        }
 
         $callbackRecord = $this->safeCallbackRecord($request, $payload, $event, $deliveryId);
 
@@ -237,6 +229,74 @@ class EvPayCheckoutService
     }
 
     /**
+     * Match the webhook to a Travela order using EvPay's echoed merchant reference,
+     * then EvPay's transaction id if the reference field was omitted.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    private function findOrderForWebhook(array $data): Order
+    {
+        $references = $this->webhookMerchantReferences($data);
+
+        foreach ($references as $reference) {
+            $order = Order::where('payment_reference', $reference)->first();
+            if ($order) {
+                return $order;
+            }
+        }
+
+        $gatewayIds = [];
+        foreach ([$data['id'] ?? null, $data['reference'] ?? null] as $value) {
+            $id = trim((string) $value);
+            if ($id !== '' && ! in_array($id, $gatewayIds, true)) {
+                $gatewayIds[] = $id;
+            }
+        }
+
+        if ($gatewayIds !== []) {
+            $order = Order::whereIn('gateway_payment_id', $gatewayIds)->first();
+            if ($order) {
+                return $order;
+            }
+        }
+
+        if ($references === [] && $gatewayIds === []) {
+            throw new EvPayWebhookException('Missing payment reference in webhook.', 422);
+        }
+
+        $hint = $references[0] ?? $gatewayIds[0];
+
+        throw new EvPayWebhookException('Order not found for reference: '.$hint, 404);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return list<string>
+     */
+    private function webhookMerchantReferences(array $data): array
+    {
+        $candidates = [
+            $data['orderReference'] ?? null,
+        ];
+
+        $metadata = $data['metadata'] ?? null;
+        if (is_array($metadata)) {
+            $candidates[] = $metadata['orderId'] ?? null;
+            $candidates[] = $metadata['orderReference'] ?? null;
+        }
+
+        $references = [];
+        foreach ($candidates as $value) {
+            $reference = trim((string) $value);
+            if ($reference !== '' && ! in_array($reference, $references, true)) {
+                $references[] = $reference;
+            }
+        }
+
+        return $references;
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function cardPaymentPayload(Order $order): array
@@ -275,6 +335,7 @@ class EvPayCheckoutService
                 'country' => 'TZ',
             ],
             'phoneNumber' => preg_replace('/\D+/', '', $user?->phone ?? '255700000000') ?: '255700000000',
+            'orderReference' => (string) $order->payment_reference,
             'callbackUrl' => (string) config('services.evpay.callback_url'),
             'metadata' => [
                 'orderId' => (string) $order->payment_reference,

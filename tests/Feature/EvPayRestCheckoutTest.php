@@ -64,6 +64,7 @@ class EvPayRestCheckoutTest extends TestCase
 
             return $payload['details']['amount'] == 50
                 && $payload['details']['currency'] === 'USD'
+                && $payload['orderReference'] === $order->fresh()->payment_reference
                 && $payload['metadata']['orderId'] === $order->fresh()->payment_reference
                 && $request->header('Idempotency-Key')[0] === $order->fresh()->payment_reference
                 && $request->hasHeader('Authorization', 'Bearer tok-abc')
@@ -165,6 +166,86 @@ class EvPayRestCheckoutTest extends TestCase
         $this->assertSame('paid', $order->payment_status);
         $this->assertSame('paid', $order->status);
         $this->assertNotNull($order->paid_at);
+    }
+
+    public function test_success_webhook_matches_order_via_metadata_when_order_reference_missing(): void
+    {
+        $this->mock(SimAssignmentService::class, function ($mock) {
+            $mock->shouldReceive('fulfillPaidOrder')->once();
+        });
+
+        $order = $this->makePendingOrder(50);
+        $t = (string) time();
+        $body = json_encode([
+            'event' => 'payment.succeeded',
+            'timestamp' => (int) $t,
+            'data' => [
+                'id' => 'evpay-ref-1',
+                'status' => 'SUCCESS',
+                'amount' => 50,
+                'currency' => 'USD',
+                'metadata' => [
+                    'orderId' => $order->payment_reference,
+                ],
+            ],
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+
+        $this->postSignedWebhook($body, $t, 'del-meta')
+            ->assertOk()
+            ->assertJsonPath('status', 'OK');
+
+        $this->assertSame('paid', $order->fresh()->payment_status);
+    }
+
+    public function test_success_webhook_matches_order_via_gateway_payment_id(): void
+    {
+        $this->mock(SimAssignmentService::class, function ($mock) {
+            $mock->shouldReceive('fulfillPaidOrder')->once();
+        });
+
+        $order = $this->makePendingOrder(50);
+        $order->gateway_payment_id = 'E020726AC15K4T29B';
+        $order->save();
+
+        $t = (string) time();
+        $body = json_encode([
+            'event' => 'payment.settled',
+            'timestamp' => (int) $t,
+            'data' => [
+                'id' => 'E020726AC15K4T29B',
+                'status' => 'SETTLED',
+                'amount' => 50,
+                'currency' => 'USD',
+            ],
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+
+        $this->postSignedWebhook($body, $t, 'del-gateway-id')
+            ->assertOk()
+            ->assertJsonPath('status', 'OK');
+
+        $order->refresh();
+        $this->assertSame('paid', $order->payment_status);
+        $this->assertSame('paid', $order->status);
+        $this->assertNotNull($order->paid_at);
+    }
+
+    public function test_webhook_without_order_identifiers_returns_422(): void
+    {
+        $this->makePendingOrder(50);
+        $t = (string) time();
+        $body = json_encode([
+            'event' => 'payment.succeeded',
+            'timestamp' => (int) $t,
+            'data' => [
+                'status' => 'SUCCESS',
+                'amount' => 50,
+                'currency' => 'USD',
+            ],
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+
+        $this->postSignedWebhook($body, $t, 'del-no-ref')
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Missing payment reference in webhook.');
     }
 
     public function test_duplicate_webhook_does_not_fulfill_twice(): void
