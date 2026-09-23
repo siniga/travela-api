@@ -122,6 +122,67 @@ class AgentOrderLookupController extends Controller
     }
 
     /**
+     * Counter cash payment: mark a physical-SIM order paid so it can be assigned.
+     */
+    public function markPaid(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'draft_id' => ['required', 'string', 'max:100'],
+        ]);
+
+        $order = Order::query()->where('draft_id', trim($data['draft_id']))->first();
+
+        if (! $order) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Order not found.',
+            ], 404);
+        }
+
+        if ($this->simAssignment->orderSimType($order) !== Esim::SIM_TYPE_PHYSICAL) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only physical-SIM orders can be marked paid at the counter.',
+            ], 422);
+        }
+
+        $alreadyPaid = $this->simAssignment->orderIsPaid($order);
+
+        if (! $alreadyPaid) {
+            $meta = is_array($order->metadata) ? $order->metadata : [];
+            $meta['marked_paid_channel'] = 'agent_counter';
+            $meta['marked_paid_by'] = $request->user()?->id;
+
+            $order->payment_status = 'paid';
+            $order->status = 'paid';
+            $order->paid_at = $order->paid_at ?? now();
+            $order->payment_gateway = $order->payment_gateway ?: 'counter';
+            $order->metadata = $meta;
+            $order->save();
+
+            try {
+                $this->simAssignment->fulfillPaidOrder($order->fresh());
+            } catch (\Throwable $e) {
+                report($e);
+            }
+
+            $order->refresh();
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $alreadyPaid
+                ? 'Order was already paid.'
+                : 'Order marked as paid.',
+            'data' => [
+                'draft_id' => $order->draft_id,
+                'payment_status' => $order->payment_status,
+                'paid_at' => optional($order->paid_at)?->toIso8601String(),
+            ],
+        ], $alreadyPaid ? 200 : 201);
+    }
+
+    /**
      * Resolve a customer order from the SIM msisdn (or iccid) shown in /agent/esims/search.
      * Used at the counter to confirm payment before assigning a physical SIM.
      */

@@ -102,6 +102,9 @@ Route::prefix('agent')->middleware(['auth:sanctum', 'agent'])->group(function ()
     Route::get('/esims/search', [EsimLookupController::class, 'searchByIccidSuffix']);
     Route::post('/orders/assign-sim', [PhysicalSimIssuanceController::class, 'assignPhysicalByOrder']);
     Route::post('/orders/issue-physical', [PhysicalSimIssuanceController::class, 'issueByOrder']);
+    Route::get('/orders/issued-physical', [PhysicalSimIssuanceController::class, 'issuedPhysical']);
+    Route::post('/orders/confirm-activation', [PhysicalSimIssuanceController::class, 'confirmActivation']);
+    Route::post('/orders/mark-paid', [AgentOrderLookupController::class, 'markPaid']);
     Route::post('/physical-sims/assign', [PhysicalSimIssuanceController::class, 'assignWalkIn']);
     Route::patch('/location', [AgentController::class, 'updateMyLocation']);
 });

@@ -131,6 +131,41 @@ class PhysicalSimIssuanceController extends Controller
     }
 
     /**
+     * Issued physical SIMs waiting for activation, plus recently completed ones.
+     */
+    public function issuedPhysical(Request $request): JsonResponse
+    {
+        $limit = min(max((int) $request->query('limit', 100), 1), 200);
+
+        return response()->json(array_merge(
+            ['success' => true],
+            $this->issuance->issuedPhysicalQueue($limit),
+        ));
+    }
+
+    /**
+     * Activation desk confirms the SIM is installed and the bundle works.
+     */
+    public function confirmActivation(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'draft_id' => ['required_without:order_id', 'nullable', 'string', 'max:100'],
+            'order_id' => ['required_without:draft_id', 'nullable', 'integer', 'exists:orders,id'],
+        ]);
+
+        $result = $this->issuance->confirmActivationForOrder($data);
+
+        return response()->json([
+            'success' => true,
+            'message' => $result['already_confirmed']
+                ? 'Activation was already confirmed.'
+                : 'Activation confirmed. Order completed.',
+            'already_confirmed' => $result['already_confirmed'],
+            'data' => $result['order'],
+        ], $result['already_confirmed'] ? 200 : 201);
+    }
+
+    /**
      * Admin confirms handover by assignment id.
      */
     public function issueByAssignment(Request $request, int $id): JsonResponse

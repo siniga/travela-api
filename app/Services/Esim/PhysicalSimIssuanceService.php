@@ -65,6 +65,90 @@ class PhysicalSimIssuanceService
     }
 
     /**
+     * Physical SIMs handed to the customer, split by activation confirmation.
+     *
+     * @return array{
+     *     issued: list<array<string, mixed>>,
+     *     completed: list<array<string, mixed>>,
+     *     issued_count: int,
+     *     completed_today_count: int
+     * }
+     */
+    public function issuedPhysicalQueue(int $limit = 100): array
+    {
+        $base = UserEsim::query()
+            ->whereNotNull('physical_issued_at')
+            ->whereNotNull('order_id')
+            ->whereHas('esim', fn ($q) => $q->where('sim_type', Esim::SIM_TYPE_PHYSICAL));
+
+        $issuedCount = (clone $base)->whereNull('device_activated_at')->count();
+
+        $issued = (clone $base)
+            ->with(['esim', 'user', 'order.user', 'order.orderItems'])
+            ->whereNull('device_activated_at')
+            ->orderByDesc('physical_issued_at')
+            ->limit($limit)
+            ->get();
+
+        $completed = (clone $base)
+            ->with(['esim', 'user', 'order.user', 'order.orderItems'])
+            ->whereNotNull('device_activated_at')
+            ->orderByDesc('device_activated_at')
+            ->limit($limit)
+            ->get();
+
+        $completedTodayCount = (clone $base)
+            ->whereDate('device_activated_at', now()->toDateString())
+            ->count();
+
+        return [
+            'issued' => $issued
+                ->map(fn (UserEsim $row) => $this->formatIssuedRow($row))
+                ->values()
+                ->all(),
+            'completed' => $completed
+                ->map(fn (UserEsim $row) => $this->formatIssuedRow($row))
+                ->values()
+                ->all(),
+            'issued_count' => $issuedCount,
+            'completed_today_count' => $completedTodayCount,
+        ];
+    }
+
+    /**
+     * Agent confirms the physical SIM is in the phone and the bundle works.
+     *
+     * @param  array{draft_id?: string, order_id?: int}  $input
+     * @return array{already_confirmed: bool, order: array<string, mixed>}
+     */
+    public function confirmActivationForOrder(array $input): array
+    {
+        $order = $this->resolveOrder($input);
+        $assignment = $this->resolveAssignmentForOrder($order, $input);
+        $assignment->loadMissing(['esim', 'user', 'order.user', 'order.orderItems']);
+        $this->assertPhysicalSim($assignment);
+
+        if (! $assignment->physical_issued_at) {
+            throw ValidationException::withMessages([
+                'draft_id' => ['Issue the physical SIM before confirming activation.'],
+            ]);
+        }
+
+        $already = $assignment->device_activated_at !== null;
+
+        if (! $already) {
+            $assignment->forceFill(['device_activated_at' => now()])->save();
+            $assignment->refresh();
+            $assignment->loadMissing(['esim', 'user', 'order.user', 'order.orderItems']);
+        }
+
+        return [
+            'already_confirmed' => $already,
+            'order' => $this->formatIssuedRow($assignment),
+        ];
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function issuancePayload(UserEsim $assignment): array
@@ -190,6 +274,38 @@ class PhysicalSimIssuanceService
         }
 
         return $assignment;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatIssuedRow(UserEsim $assignment): array
+    {
+        $assignment->loadMissing(['esim', 'user', 'order.user', 'order.orderItems']);
+        $order = $assignment->order;
+        $draftId = (string) ($order?->draft_id ?? '');
+        $digits = preg_replace('/\D+/', '', $draftId) ?? '';
+        $suffix = $digits !== '' ? substr($digits, -3) : '';
+        $customer = $order?->user ?? $assignment->user;
+        $item = $order?->orderItems?->first();
+        $activated = $assignment->device_activated_at;
+
+        return [
+            'draft_id' => $draftId,
+            'order_id' => $order?->id,
+            'order_number' => $draftId !== '' ? $draftId : null,
+            'order_number_suffix' => $suffix !== '' ? $suffix : null,
+            'customer_name' => $customer?->name,
+            'customer_email' => $customer?->email,
+            'bundle_name' => $item?->bundle_name,
+            'iccid' => $assignment->esim?->iccid,
+            'msisdn' => $assignment->esim?->msisdn,
+            'agent_location' => $assignment->physical_issued_location,
+            'issued_at' => optional($assignment->physical_issued_at)?->toIso8601String(),
+            'completed_at' => optional($activated)?->toIso8601String(),
+            'status' => $activated ? 'completed' : 'issued',
+            'payment_status' => $order?->payment_status,
+        ];
     }
 
     private function assertPhysicalSim(UserEsim $assignment): void
