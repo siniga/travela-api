@@ -54,11 +54,9 @@ class AuthController extends Controller
             return response()->json(['message' => 'Invalid credentials'], 422);
         }
 
-        // Optional: rotate existing token(s) for device name
-        if ($req->device) {
-            $user->tokens()->where('name', $req->device)->delete();
-        }
-
+        // Do not delete other tokens for this device name. The admin app always
+        // sends device "web", and wiping those tokens signs out every browser
+        // that still has one, which surfaces as Unauthenticated on every page.
         $token = $user->createToken($req->device ?? 'mobile')->plainTextToken;
 
         return response()->json([
