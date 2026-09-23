@@ -48,7 +48,9 @@ class EsimImportItemController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'SIM saved and provisioned on Vodacom.',
+                'message' => $batch->isPhysical()
+                    ? 'Physical SIM saved to inventory.'
+                    : 'SIM saved and provisioned on Vodacom.',
                 'item' => $result['item']->toResponseArray(),
                 'esim' => $result['esim']->toImportApiArray(),
                 'vodacom' => $result['vodacom'],
@@ -61,7 +63,7 @@ class EsimImportItemController extends Controller
                 $esimPayload = Esim::query()->find($fresh->esim_id)?->toImportApiArray();
             }
 
-            $message = $fresh?->esim_id
+            $message = (! $batch->isPhysical() && $fresh?->esim_id)
                 ? 'Saved to inventory but Vodacom provisioning failed: '.$e->getMessage()
                 : $e->getMessage();
 

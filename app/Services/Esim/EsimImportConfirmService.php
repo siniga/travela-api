@@ -19,7 +19,8 @@ class EsimImportConfirmService
     ) {}
 
     /**
-     * Persist one pending/failed item to inventory and provision on Vodacom.
+     * Persist one pending/failed item to inventory.
+     * eSIM batches are also provisioned on Vodacom; physical spreadsheet imports stay local only.
      *
      * @param  array{
      *   phone_number?: string|null,
@@ -27,7 +28,7 @@ class EsimImportConfirmService
      *   network_id?: int|null,
      *   qr_code_data?: string|null
      * }  $overrides
-     * @return array{esim: Esim, item: EsimImportItem, vodacom: array<string, mixed>}
+     * @return array{esim: Esim, item: EsimImportItem, vodacom: array<string, mixed>|null}
      */
     public function confirm(EsimImportBatch $batch, EsimImportItem $item, array $overrides = []): array
     {
@@ -56,13 +57,17 @@ class EsimImportConfirmService
                 ];
 
                 if (! $extracted['phone_number']) {
-                    throw new RuntimeException('Phone number is required before confirming.');
+                    throw new RuntimeException('MSISDN is required before confirming.');
+                }
+
+                if ($batch->isPhysical() && empty($extracted['iccid'])) {
+                    throw new RuntimeException('ICCID is required before confirming.');
                 }
 
                 $persistResult = $this->importService->persist($batch, $item, $extracted);
                 $esim = $persistResult['esim'];
 
-                if (! empty($overrides['network_id'])) {
+                if (! $batch->isPhysical() && ! empty($overrides['network_id'])) {
                     $esim->update(['network_id' => (int) $overrides['network_id']]);
                     $esim = $esim->fresh();
                 }
@@ -77,8 +82,15 @@ class EsimImportConfirmService
                 return $esim;
             });
 
-            $vodacomResult = $this->provisionOnVodacom($persisted);
-            $persisted->update(['provider_status' => Esim::PROVIDER_STATUS_ACTIVE]);
+            $vodacomResult = null;
+
+            if ($batch->isPhysical()) {
+                // Physical Excel import only stocks local inventory.
+                $persisted->update(['provider_status' => Esim::PROVIDER_STATUS_PENDING]);
+            } else {
+                $vodacomResult = $this->provisionOnVodacom($persisted);
+                $persisted->update(['provider_status' => Esim::PROVIDER_STATUS_ACTIVE]);
+            }
 
             $item->update([
                 'status' => EsimImportItem::STATUS_COMPLETED,
