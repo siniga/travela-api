@@ -332,7 +332,7 @@ class EsimImportBatchController extends Controller
         return response()->json([
             'success' => $result['failed'] === 0,
             'message' => sprintf(
-                'Skip review finished: %d saved to inventory, %d failed.',
+                'Skip review finished: %d completed, %d failed.',
                 $result['completed'],
                 $result['failed']
             ),

@@ -75,27 +75,32 @@ class VodacomSimProvisioningService
         $description = trim((string) ($esim->description ?? ''));
         $description = $description !== '' ? $description : 'Travela import';
 
-        if (is_string($esim->iccid) && trim($esim->iccid) !== '') {
-            return [
-                'iccid' => strtoupper(trim($esim->iccid)),
-                'network_id' => $networkId,
-                'description' => $description,
-            ];
-        }
-
-        if (is_string($esim->imsi) && trim($esim->imsi) !== '') {
-            return [
-                'imsi' => trim($esim->imsi),
-                'network_id' => $networkId,
-                'description' => $description,
-            ];
-        }
-
-        return [
-            'msisdn' => Esim::toVodacomMsisdn((string) $esim->msisdn),
+        $payload = [
             'network_id' => $networkId,
             'description' => $description,
         ];
+
+        $hasMsisdn = is_string($esim->msisdn) && trim($esim->msisdn) !== '';
+        $hasIccid = is_string($esim->iccid) && trim($esim->iccid) !== '';
+        $hasImsi = is_string($esim->imsi) && trim($esim->imsi) !== '';
+
+        // Physical cards (and any row with both) must send MSISDN + ICCID together.
+        // Vodacom rejects ICCID-only creates with "Missing SIM identifier".
+        if ($hasMsisdn) {
+            $payload['msisdn'] = Esim::toVodacomMsisdn($esim->msisdn);
+        }
+        if ($hasIccid) {
+            $payload['iccid'] = strtoupper(trim($esim->iccid));
+        }
+        if ($hasImsi) {
+            $payload['imsi'] = trim($esim->imsi);
+        }
+
+        if (! $hasMsisdn && ! $hasIccid && ! $hasImsi) {
+            throw new \RuntimeException('MSISDN, ICCID, or IMSI is required to create a SIM on Vodacom.');
+        }
+
+        return $payload;
     }
 
     /**
