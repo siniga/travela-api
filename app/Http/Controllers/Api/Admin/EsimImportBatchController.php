@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\Esim;
 use App\Models\EsimImportBatch;
 use App\Models\EsimImportItem;
+use App\Services\Esim\EsimImportConfirmService;
 use App\Services\Esim\EsimSingleImportService;
+use App\Services\Esim\PhysicalSimSpreadsheetParser;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -17,6 +19,8 @@ class EsimImportBatchController extends Controller
 {
     public function __construct(
         private readonly EsimSingleImportService $importService,
+        private readonly EsimImportConfirmService $confirmService,
+        private readonly PhysicalSimSpreadsheetParser $spreadsheetParser,
     ) {}
 
     public function store(Request $request): JsonResponse
@@ -66,6 +70,13 @@ class EsimImportBatchController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'This import batch is no longer accepting items.',
+            ], 422);
+        }
+
+        if ($batch->isPhysical()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Physical batches must be imported from a spreadsheet (.xlsx, .xls, or .csv).',
             ], 422);
         }
 
@@ -155,6 +166,13 @@ class EsimImportBatchController extends Controller
             ], 422);
         }
 
+        if ($batch->isPhysical()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Physical batches must be imported from a spreadsheet (.xlsx, .xls, or .csv).',
+            ], 422);
+        }
+
         $validated = $request->validate([
             'file' => ['required', 'file', 'mimes:pdf,png,jpg,jpeg', 'max:5120'],
             'page_number' => ['nullable', 'integer', 'min:1'],
@@ -220,6 +238,109 @@ class EsimImportBatchController extends Controller
                 'batch' => $batch->toSummaryArray(),
             ], 422);
         }
+    }
+
+    /**
+     * Upload an Excel/CSV file for a physical batch and create pending review items.
+     */
+    public function uploadSpreadsheet(Request $request, EsimImportBatch $batch): JsonResponse
+    {
+        if (in_array($batch->status, [EsimImportBatch::STATUS_COMPLETED, EsimImportBatch::STATUS_CANCELLED], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This import batch is no longer accepting items.',
+            ], 422);
+        }
+
+        if (! $batch->isPhysical()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Spreadsheet upload is only supported for physical SIM batches.',
+            ], 422);
+        }
+
+        $validated = $request->validate([
+            'file' => ['required', 'file', 'max:10240'],
+        ]);
+
+        $extension = strtolower($validated['file']->getClientOriginalExtension() ?: '');
+        if (! in_array($extension, ['xlsx', 'xls', 'csv'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Physical SIM import accepts .xlsx, .xls, or .csv files only.',
+                'batch' => $batch->toSummaryArray(),
+            ], 422);
+        }
+
+        try {
+            $rows = $this->spreadsheetParser->parse($validated['file']);
+            $sourcePath = $this->confirmService->storeSpreadsheetSource($batch, $validated['file']);
+            $items = $this->confirmService->createPendingItemsFromRows($batch, $rows, $sourcePath);
+
+            $defaultNetworkId = Esim::defaultNetworkId();
+
+            return response()->json([
+                'success' => true,
+                'message' => count($items).' physical SIM rows ready for review.',
+                'batch' => $batch->fresh()->toSummaryArray(),
+                'items' => collect($items)->map(fn (EsimImportItem $item) => [
+                    'item' => $item->toResponseArray(),
+                    'preview' => [
+                        'phone_number' => $item->phone_number,
+                        'iccid' => $item->iccid,
+                        'qr_code_data' => null,
+                        'qr_image_base64' => null,
+                        'network_id' => $defaultNetworkId,
+                    ],
+                ])->values()->all(),
+            ], 201);
+        } catch (\Throwable $e) {
+            Log::warning('Physical SIM spreadsheet upload failed', [
+                'batch_id' => $batch->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'batch' => $batch->fresh()->toSummaryArray(),
+            ], 422);
+        }
+    }
+
+    /**
+     * Confirm and provision every pending/failed item without stepping through review.
+     */
+    public function confirmAll(EsimImportBatch $batch): JsonResponse
+    {
+        if (in_array($batch->status, [EsimImportBatch::STATUS_COMPLETED, EsimImportBatch::STATUS_CANCELLED], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This import batch is closed.',
+            ], 422);
+        }
+
+        if (! $batch->isPhysical()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Skip review is only supported for physical SIM spreadsheet batches.',
+            ], 422);
+        }
+
+        $result = $this->confirmService->confirmAll($batch);
+
+        return response()->json([
+            'success' => $result['failed'] === 0,
+            'message' => sprintf(
+                'Skip review finished: %d completed, %d failed.',
+                $result['completed'],
+                $result['failed']
+            ),
+            'completed' => $result['completed'],
+            'failed' => $result['failed'],
+            'items' => $result['items'],
+            'batch' => $batch->fresh()->toSummaryArray(),
+        ], $result['failed'] === 0 ? 200 : 422);
     }
 
     public function finish(EsimImportBatch $batch): JsonResponse

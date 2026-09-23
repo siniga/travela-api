@@ -117,8 +117,6 @@ class EsimSingleImportService
         $iccid = isset($extracted['iccid']) && $extracted['iccid'] !== ''
             ? strtoupper(trim((string) $extracted['iccid']))
             : null;
-        $qrCodeData = $extracted['qr_code_data'] ?? null;
-        $qrPath = $extracted['qr_code_path'] ?? $item->qr_code_path;
 
         $existing = Esim::query()->where('msisdn', $phoneNumber)->first();
 
@@ -126,6 +124,48 @@ class EsimSingleImportService
         $importDescription = $batchSimType === Esim::SIM_TYPE_PHYSICAL
             ? 'Imported physical card via batch #'.$batch->id
             : 'Imported eSIM via batch #'.$batch->id;
+
+        if ($batchSimType === Esim::SIM_TYPE_PHYSICAL) {
+            // Physical spreadsheet rows only supply msisdn + iccid.
+            // Non-Excel data columns stay null; operational fields use defaults.
+            $attributes = [
+                'import_batch_id' => $batch->id,
+                'iccid' => $iccid,
+                'sim_type' => Esim::SIM_TYPE_PHYSICAL,
+                'provider_status' => Esim::PROVIDER_STATUS_PENDING,
+                'description' => $importDescription,
+                'qr_code_path' => null,
+                'qr_code_data' => null,
+                'imsi' => null,
+                'sim_id' => null,
+                'balances' => null,
+                'balance_fetched_at' => null,
+            ];
+
+            if (! $existing) {
+                $attributes['status'] = 'AVAILABLE';
+                $attributes['sale_status'] = Esim::SALE_STATUS_AVAILABLE;
+                $attributes['network_id'] = Esim::defaultNetworkId();
+            } else {
+                if (! $iccid && $existing->iccid) {
+                    unset($attributes['iccid']);
+                }
+                // Keep existing operational status/network on update; still clear QR/IMSI.
+            }
+
+            $esim = Esim::query()->updateOrCreate(
+                ['msisdn' => $phoneNumber],
+                $attributes,
+            );
+
+            return [
+                'esim' => $esim->fresh(),
+                'created' => $existing === null,
+            ];
+        }
+
+        $qrCodeData = $extracted['qr_code_data'] ?? null;
+        $qrPath = $extracted['qr_code_path'] ?? $item->qr_code_path;
 
         $attributes = array_filter([
             'import_batch_id' => $batch->id,

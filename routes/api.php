@@ -144,6 +144,8 @@ Route::prefix('admin')->middleware(['auth:sanctum', 'admin'])->group(function ()
     Route::get('/esim-import-batches/{batch}', [EsimImportBatchController::class, 'show']);
     Route::post('/esim-import-batches/{batch}/items', [EsimImportBatchController::class, 'storeItem']);
     Route::post('/esim-import-batches/{batch}/items/preview', [EsimImportBatchController::class, 'previewItem']);
+    Route::post('/esim-import-batches/{batch}/spreadsheet', [EsimImportBatchController::class, 'uploadSpreadsheet']);
+    Route::post('/esim-import-batches/{batch}/confirm-all', [EsimImportBatchController::class, 'confirmAll']);
     Route::post('/esim-import-batches/{batch}/finish', [EsimImportBatchController::class, 'finish']);
     Route::post('/esim-import-items/{item}/confirm', [EsimImportItemController::class, 'confirm']);
     Route::post('/esim-import-items/{item}/skip', [EsimImportItemController::class, 'skip']);

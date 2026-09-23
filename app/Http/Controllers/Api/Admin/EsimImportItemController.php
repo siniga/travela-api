@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Esim;
 use App\Models\EsimImportBatch;
 use App\Models\EsimImportItem;
+use App\Services\Esim\EsimImportConfirmService;
 use App\Services\Esim\EsimSingleImportService;
 use App\Services\Esim\VodacomSimProvisioningService;
 use Illuminate\Http\JsonResponse;
@@ -17,6 +18,7 @@ class EsimImportItemController extends Controller
 {
     public function __construct(
         private readonly EsimSingleImportService $importService,
+        private readonly EsimImportConfirmService $confirmService,
         private readonly VodacomSimProvisioningService $vodacomProvisioning,
     ) {}
 
@@ -41,94 +43,34 @@ class EsimImportItemController extends Controller
             'qr_code_data' => ['nullable', 'string'],
         ]);
 
-        if ($item->status === EsimImportItem::STATUS_FAILED && $batch->failed_items > 0) {
-            $batch->decrement('failed_items');
-        }
-
-        $item->update([
-            'status' => EsimImportItem::STATUS_PROCESSING,
-            'error_message' => null,
-        ]);
-
         try {
-            $persisted = DB::transaction(function () use ($batch, $item, $validated) {
-                $extracted = [
-                    'phone_number' => $validated['phone_number'] ?? $item->phone_number,
-                    'iccid' => $validated['iccid'] ?? $item->iccid,
-                    'qr_code_path' => $item->qr_code_path,
-                    'qr_code_data' => $validated['qr_code_data'] ?? null,
-                ];
-
-                if (! $extracted['phone_number']) {
-                    throw new \RuntimeException('Phone number is required before confirming.');
-                }
-
-                $persistResult = $this->importService->persist($batch, $item, $extracted);
-                $esim = $persistResult['esim'];
-
-                if (! empty($validated['network_id'])) {
-                    $esim->update(['network_id' => (int) $validated['network_id']]);
-                    $esim = $esim->fresh();
-                }
-
-                $item->update([
-                    'esim_id' => $esim->id,
-                    'phone_number' => $esim->msisdn,
-                    'iccid' => $esim->iccid,
-                ]);
-
-                return $esim;
-            });
-
-            $vodacomResult = $this->provisionOnVodacom($persisted);
-            $persisted->update(['provider_status' => Esim::PROVIDER_STATUS_ACTIVE]);
-
-            $item->update([
-                'status' => EsimImportItem::STATUS_COMPLETED,
-                'error_message' => null,
-            ]);
-
-            $batch->recordItemSuccess();
-            $batch->refresh();
+            $result = $this->confirmService->confirm($batch, $item, $validated);
 
             return response()->json([
                 'success' => true,
                 'message' => 'SIM saved and provisioned on Vodacom.',
-                'item' => $item->fresh()->toResponseArray(),
-                'esim' => $persisted->fresh()->toImportApiArray(),
-                'vodacom' => $vodacomResult,
+                'item' => $result['item']->toResponseArray(),
+                'esim' => $result['esim']->toImportApiArray(),
+                'vodacom' => $result['vodacom'],
                 'batch' => $batch->fresh()->toSummaryArray(),
             ]);
         } catch (\Throwable $e) {
-            Log::warning('eSIM import confirm failed', [
-                'item_id' => $item->id,
-                'batch_id' => $batch->id,
-                'error' => $e->getMessage(),
-            ]);
-
-            $item->update([
-                'status' => EsimImportItem::STATUS_FAILED,
-                'error_message' => $e->getMessage(),
-            ]);
-
-            $batch->recordItemFailure();
-            $batch->refresh();
-
+            $fresh = $item->fresh();
             $esimPayload = null;
-            if ($item->esim_id) {
-                $esimPayload = Esim::query()->find($item->esim_id)?->toImportApiArray();
+            if ($fresh?->esim_id) {
+                $esimPayload = Esim::query()->find($fresh->esim_id)?->toImportApiArray();
             }
 
-            $message = $item->esim_id
+            $message = $fresh?->esim_id
                 ? 'Saved to inventory but Vodacom provisioning failed: '.$e->getMessage()
                 : $e->getMessage();
 
             return response()->json([
                 'success' => false,
                 'message' => $message,
-                'item' => $item->fresh()->toResponseArray(),
+                'item' => $fresh?->toResponseArray(),
                 'esim' => $esimPayload,
-                'batch' => $batch->toSummaryArray(),
+                'batch' => $batch->fresh()->toSummaryArray(),
             ], 422);
         }
     }
@@ -271,6 +213,36 @@ class EsimImportItemController extends Controller
                 'success' => false,
                 'message' => 'This import batch is closed.',
             ], 422);
+        }
+
+        if ($batch->isPhysical()) {
+            if (! $item->phone_number || ! $item->iccid) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Physical item is missing msisdn or iccid.',
+                ], 422);
+            }
+
+            try {
+                $result = $this->confirmService->confirm($batch, $item, [
+                    'phone_number' => $item->phone_number,
+                    'iccid' => $item->iccid,
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'item' => $result['item']->toResponseArray(),
+                    'esim' => $result['esim']->toImportApiArray(),
+                    'batch' => $batch->fresh()->toSummaryArray(),
+                ]);
+            } catch (\Throwable $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                    'item' => $item->fresh()->toResponseArray(),
+                    'batch' => $batch->fresh()->toSummaryArray(),
+                ], 422);
+            }
         }
 
         $validated = $request->validate([
