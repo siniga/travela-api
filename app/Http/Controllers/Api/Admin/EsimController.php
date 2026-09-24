@@ -22,7 +22,8 @@ class EsimController extends Controller
         ]);
 
         $query = Esim::query()
-            ->where('sim_type', Esim::SIM_TYPE_ESIM)
+            ->with(['importBatch', 'importItems'])
+            ->orderByDesc('created_at')
             ->orderByDesc('id');
 
         if (! empty($validated['phone_number'])) {
@@ -42,7 +43,7 @@ class EsimController extends Controller
         }
 
         $paginator = $query->paginate($validated['per_page'] ?? 15);
-        $paginator->getCollection()->transform(fn (Esim $esim) => $this->formatListEsim($esim));
+        $paginator->through(fn (Esim $esim) => $this->formatListEsim($esim));
 
         return response()->json([
             'success' => true,
@@ -161,10 +162,24 @@ class EsimController extends Controller
      */
     private function formatListEsim(Esim $esim): array
     {
+        $iccid = trim((string) ($esim->iccid ?? ''));
+        if ($iccid === '') {
+            $fromItem = $esim->importItems
+                ->sortByDesc('id')
+                ->first(fn ($item) => trim((string) ($item->iccid ?? '')) !== '');
+            $iccid = trim((string) ($fromItem?->iccid ?? ''));
+        }
+
+        $simType = trim((string) ($esim->sim_type ?? ''));
+        if ($simType === '') {
+            $simType = trim((string) ($esim->importBatch?->sim_type ?? ''));
+        }
+
         return [
             'id' => $esim->id,
             'phone_number' => $esim->msisdn,
-            'iccid' => $esim->iccid,
+            'iccid' => $iccid !== '' ? $iccid : null,
+            'sim_type' => $simType !== '' ? $simType : null,
             'status' => $esim->sale_status ?? Esim::SALE_STATUS_AVAILABLE,
             'import_batch_id' => $esim->import_batch_id,
             'has_qr_code' => (bool) $esim->qr_code_path,

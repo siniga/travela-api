@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Esim extends Model
 {
@@ -52,6 +53,11 @@ class Esim extends Model
     public function importBatch(): BelongsTo
     {
         return $this->belongsTo(EsimImportBatch::class, 'import_batch_id');
+    }
+
+    public function importItems(): HasMany
+    {
+        return $this->hasMany(EsimImportItem::class, 'esim_id');
     }
 
     /**
