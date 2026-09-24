@@ -53,10 +53,6 @@ class VodacomSimProvisioningService
     {
         $query = $this->buildIdentifierQuery($esim);
 
-        if ($query === []) {
-            throw new \RuntimeException('MSISDN or ICCID is required to activate on Vodacom.');
-        }
-
         $response = $this->vodacom->post('/api/sims-activate', $query);
 
         if (! $response->successful()) {
@@ -75,54 +71,56 @@ class VodacomSimProvisioningService
         $description = trim((string) ($esim->description ?? ''));
         $description = $description !== '' ? $description : 'Travela import';
 
-        $payload = [
+        return $this->pickSingleIdentifier($esim) + [
             'network_id' => $networkId,
             'description' => $description,
         ];
-
-        $hasMsisdn = is_string($esim->msisdn) && trim($esim->msisdn) !== '';
-        $hasIccid = is_string($esim->iccid) && trim($esim->iccid) !== '';
-        $hasImsi = is_string($esim->imsi) && trim($esim->imsi) !== '';
-
-        // Physical cards (and any row with both) must send MSISDN + ICCID together.
-        // Vodacom rejects ICCID-only creates with "Missing SIM identifier".
-        if ($hasMsisdn) {
-            $payload['msisdn'] = Esim::toVodacomMsisdn($esim->msisdn);
-        }
-        if ($hasIccid) {
-            $payload['iccid'] = strtoupper(trim($esim->iccid));
-        }
-        if ($hasImsi) {
-            $payload['imsi'] = trim($esim->imsi);
-        }
-
-        if (! $hasMsisdn && ! $hasIccid && ! $hasImsi) {
-            throw new \RuntimeException('MSISDN, ICCID, or IMSI is required to create a SIM on Vodacom.');
-        }
-
-        return $payload;
     }
 
     /**
+     * Vodacom create/activate use a oneOf schema: exactly one of msisdn | iccid | imsi.
+     *
      * @return array<string, string>
      */
     public function buildIdentifierQuery(Esim $esim): array
     {
-        $query = [];
+        return $this->pickSingleIdentifier($esim);
+    }
 
-        if (is_string($esim->msisdn) && trim($esim->msisdn) !== '') {
-            $query['msisdn'] = Esim::toVodacomMsisdn($esim->msisdn);
+    /**
+     * Physical: prefer MSISDN. eSIM / others: prefer ICCID, then IMSI, then MSISDN.
+     *
+     * @return array<string, string>
+     */
+    private function pickSingleIdentifier(Esim $esim): array
+    {
+        $hasMsisdn = is_string($esim->msisdn) && trim($esim->msisdn) !== '';
+        $hasIccid = is_string($esim->iccid) && trim($esim->iccid) !== '';
+        $hasImsi = is_string($esim->imsi) && trim($esim->imsi) !== '';
+
+        if ($esim->sim_type === Esim::SIM_TYPE_PHYSICAL) {
+            if ($hasMsisdn) {
+                return ['msisdn' => Esim::toVodacomMsisdn($esim->msisdn)];
+            }
+            if ($hasIccid) {
+                return ['iccid' => strtoupper(trim($esim->iccid))];
+            }
+            if ($hasImsi) {
+                return ['imsi' => trim($esim->imsi)];
+            }
+        } else {
+            if ($hasIccid) {
+                return ['iccid' => strtoupper(trim($esim->iccid))];
+            }
+            if ($hasImsi) {
+                return ['imsi' => trim($esim->imsi)];
+            }
+            if ($hasMsisdn) {
+                return ['msisdn' => Esim::toVodacomMsisdn($esim->msisdn)];
+            }
         }
 
-        if (is_string($esim->iccid) && trim($esim->iccid) !== '') {
-            $query['iccid'] = strtoupper(trim($esim->iccid));
-        }
-
-        if (is_string($esim->imsi) && trim($esim->imsi) !== '') {
-            $query['imsi'] = trim($esim->imsi);
-        }
-
-        return $query;
+        throw new \RuntimeException('MSISDN, ICCID, or IMSI is required for Vodacom SIM operations.');
     }
 
     private function simAlreadyExists(Response $response): bool
