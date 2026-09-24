@@ -43,6 +43,23 @@ class BundleSeeder extends Seeder
         /** Larger data SKUs tied to verified sim_bundle_id values (inactive until you publish pricing). */
         $simOnlyBundles = [
             [
+                'alias' => 'Starter',
+                'name' => 'Internet - 30Days - 25MB',
+                'bundle_size' => 25,
+                'bundle_size_in_mb' => 25,
+                'data_mb' => 25,
+                'validity_days' => 30,
+                'price_usd' => 0,
+                'sim_bundle_id' => 66,
+                'unit' => 'MB',
+                'active' => true,
+                'metadata' => [
+                    'source' => 'BundleSeeder',
+                    'admin_only' => true,
+                    'local_only' => true,
+                ],
+            ],
+            [
                 'alias' => 'Nomad',
                 'name' => 'Nomad 10GB',
                 'bundle_size' => 10,
@@ -94,12 +111,13 @@ class BundleSeeder extends Seeder
 
 
         foreach ($simOnlyBundles as $row) {
+            $payload = array_merge($this->basePayload($dataType->id, $pivot->id, $currency), $row);
             Bundle::updateOrCreate(
                 [
                     'country_provider_id' => $pivot->id,
                     'sim_bundle_id' => $row['sim_bundle_id'],
                 ],
-                array_merge($this->basePayload($dataType->id, $pivot->id, $currency), $row)
+                $payload
             );
         }
     }

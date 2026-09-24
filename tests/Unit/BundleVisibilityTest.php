@@ -5,7 +5,7 @@ namespace Tests\Unit;
 use App\Models\Bundle;
 use App\Models\User;
 use App\Support\BundleVisibility;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 class BundleVisibilityTest extends TestCase
 {
@@ -20,11 +20,14 @@ class BundleVisibilityTest extends TestCase
         ]);
 
         $this->assertTrue(BundleVisibility::isAdminOnlyBundle($bundle));
-        $this->assertFalse(BundleVisibility::visibleTo(null, $bundle));
-        $this->assertFalse(BundleVisibility::visibleTo(new User(['role' => 'user']), $bundle));
 
-        $admin = new User(['role' => 'admin']);
-        $this->assertTrue(BundleVisibility::visibleTo($admin, $bundle));
+        app()->detectEnvironment(fn () => 'local');
+        $this->assertTrue(BundleVisibility::visibleTo(null, $bundle));
+        $this->assertTrue(BundleVisibility::visibleTo(new User(['role' => 'user']), $bundle));
+
+        app()->detectEnvironment(fn () => 'production');
+        $this->assertFalse(BundleVisibility::visibleTo(null, $bundle));
+        $this->assertFalse(BundleVisibility::visibleTo(new User(['role' => 'admin']), $bundle));
     }
 
     public function test_paid_starter_is_public(): void
@@ -36,6 +39,7 @@ class BundleVisibilityTest extends TestCase
             'price_usd' => 20,
         ]);
 
+        app()->detectEnvironment(fn () => 'production');
         $this->assertFalse(BundleVisibility::isAdminOnlyBundle($bundle));
         $this->assertTrue(BundleVisibility::visibleTo(null, $bundle));
     }
