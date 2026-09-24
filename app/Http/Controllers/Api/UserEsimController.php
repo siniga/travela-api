@@ -50,6 +50,7 @@ class UserEsimController extends Controller
             'success' => true,
             'data' => $esims,
             'latest_order' => $this->esimOrderLink->latestOrderForUser($userId),
+            'assignment_prompt' => $this->simAssignment->assignmentPromptForUser($userId),
         ]);
     }
 
@@ -263,6 +264,32 @@ class UserEsimController extends Controller
             ], 200);
         }
 
+        $prompt = $this->simAssignment->deferEsimUntilUserConfirms($latestPaid);
+        if ($prompt['assigned'] ?? false) {
+            $assignment = $prompt['assignment'] ?? null;
+            if ($assignment instanceof UserEsim) {
+                return $this->assignmentStatusResponse($assignment, 'assigned');
+            }
+        }
+
+        if (! ($prompt['assigned'] ?? false)) {
+            return response()->json([
+                'success' => false,
+                'status' => $prompt['reason'] === 'awaiting_confirmation'
+                    ? 'awaiting_confirmation'
+                    : ($prompt['reason'] === 'scheduled' ? 'scheduled' : 'payment_required'),
+                'has_sim' => false,
+                'poll_again' => false,
+                'activation_date' => $prompt['activation_date'] ?? null,
+                'order_id' => $prompt['order_id'] ?? $latestPaid->id,
+                'message' => ($prompt['reason'] ?? '') === 'awaiting_confirmation'
+                    ? 'Your eSIM activation date is here. Assign your SIM from the dashboard, or choose a later date.'
+                    : 'Your eSIM activation date is still ahead.',
+                'latest_order' => $latestOrder,
+                'data' => null,
+            ], 200);
+        }
+
         $available = $this->simAssignment->availableCount(Esim::SIM_TYPE_ESIM);
 
         return response()->json([
@@ -335,10 +362,14 @@ class UserEsimController extends Controller
                 'status' => match ($result['reason'] ?? '') {
                     'no_esim_inventory' => 'waiting_for_inventory',
                     'payment_not_paid' => 'payment_required',
+                    'scheduled' => 'scheduled',
+                    'awaiting_confirmation' => 'awaiting_confirmation',
                     default => 'not_assigned',
                 },
                 'has_sim' => false,
                 'poll_again' => in_array($result['reason'] ?? '', ['no_esim_inventory', 'payment_not_paid'], true),
+                'activation_date' => $result['activation_date'] ?? null,
+                'order_id' => $result['order_id'] ?? null,
                 'retry_after_seconds' => 5,
                 'message' => match ($result['reason'] ?? '') {
                     'no_esim_inventory' => 'No eSIM numbers available yet. Retry shortly.',
@@ -364,6 +395,56 @@ class UserEsimController extends Controller
             $created ? 'assigned' : 'already_assigned',
             $result['recharge'] ?? null,
         );
+    }
+
+    public function updateActivationDate(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'activation_date' => ['required', 'date_format:Y-m-d'],
+            'order_id' => ['nullable', 'integer'],
+        ]);
+
+        $userId = (int) $request->user()->id;
+        $order = null;
+
+        if (! empty($data['order_id'])) {
+            $order = Order::query()
+                ->where('id', $data['order_id'])
+                ->where('user_id', $userId)
+                ->first();
+        }
+
+        if (! $order) {
+            $order = $this->esimOrderLink->latestPaidOrderWithBundles($userId)
+                ?? Order::query()
+                    ->where('user_id', $userId)
+                    ->orderByDesc('id')
+                    ->first();
+        }
+
+        if (! $order) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Order not found.',
+            ], 404);
+        }
+
+        try {
+            $order = $this->simAssignment->rescheduleActivationDate($order, $data['activation_date']);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => collect($e->errors())->flatten()->first(),
+                'errors' => $e->errors(),
+            ], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'activation_date' => $this->simAssignment->activationDateIso($order),
+            'order_id' => $order->id,
+            'assignment_prompt' => $this->simAssignment->assignmentPromptForUser($userId),
+        ]);
     }
 
     public function recharges(Request $request)

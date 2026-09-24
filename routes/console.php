@@ -81,3 +81,42 @@ Artisan::command('mail:test {email}', function () {
 
     return 0;
 })->purpose('Send a test verification email through the configured mailer');
+
+Artisan::command('esim:notify-assignment-due', function () {
+    $assignment = app(\App\Services\Esim\SimAssignmentService::class);
+    $sent = 0;
+
+    $orders = \App\Models\Order::query()
+        ->with('trip')
+        ->where(function ($q) {
+            $q->where('payment_status', 'paid')->orWhere('status', 'paid');
+        })
+        ->whereHas('trip', function ($q) {
+            $q->whereDate('arrival_date', '<=', now()->toDateString());
+        })
+        ->orderBy('id')
+        ->get();
+
+    foreach ($orders as $order) {
+        if (\App\Support\OrderCheckout::isTopUpOrder($order)) {
+            continue;
+        }
+        if ($assignment->orderSimType($order) !== \App\Models\Esim::SIM_TYPE_ESIM) {
+            continue;
+        }
+        if ($assignment->findAssignmentForOrder($order)) {
+            continue;
+        }
+
+        $before = $order->metadata['assignment_due_email_for'] ?? null;
+        $assignment->notifyAssignmentDue($order);
+        $order->refresh();
+        if (($order->metadata['assignment_due_email_for'] ?? null) !== $before) {
+            $sent++;
+        }
+    }
+
+    $this->info("Assignment-due emails sent: {$sent}");
+
+    return 0;
+})->purpose('Email customers when their eSIM activation date is due and no number is assigned');

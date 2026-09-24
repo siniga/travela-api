@@ -10,7 +10,8 @@ use Laravel\Sanctum\PersonalAccessToken;
 class BundleVisibility
 {
     /**
-     * Admin-only test SKU: free Starter (e.g. 25 MB @ USD 0).
+     * Local-only test SKU: free Starter (e.g. 25 MB @ USD 0).
+     * Hidden automatically when APP_ENV is not local (e.g. production).
      */
     public static function isAdminOnlyBundle(Bundle $bundle): bool
     {
@@ -47,7 +48,7 @@ class BundleVisibility
             return true;
         }
 
-        return $user?->isAdmin() ?? false;
+        return app()->environment('local');
     }
 
     /**

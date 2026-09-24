@@ -4,8 +4,10 @@ namespace App\Services\Esim;
 
 use App\Models\Esim;
 use App\Models\Order;
+use App\Models\Trip;
 use App\Models\UserEsim;
 use App\Support\OrderCheckout;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
@@ -16,6 +18,7 @@ class SimAssignmentService
         private readonly UserEsimOrderLinkService $esimOrderLink,
         private readonly OrderRechargeService $orderRecharge,
         private readonly EsimActivationEmailService $activationEmail,
+        private readonly EsimAssignmentDueEmailService $assignmentDueEmail,
     ) {}
 
     public function orderIsPaid(Order $order): bool
@@ -51,13 +54,11 @@ class SimAssignmentService
             return $this->fulfillTopUpPaidOrder($order, $evpayContext);
         }
 
-        $result = $this->assignForPaidOrder($order);
-
-        if (($result['sim_type'] ?? null) === Esim::SIM_TYPE_ESIM && $this->orderIsPaid($order)) {
-            $result['recharge'] = $this->rechargeOrderSafely($order->fresh(), $evpayContext);
+        if ($this->orderSimType($order) === Esim::SIM_TYPE_ESIM) {
+            return $this->deferEsimUntilUserConfirms($order);
         }
 
-        return $result;
+        return $this->assignForPaidOrder($order);
     }
 
     /**
@@ -284,7 +285,203 @@ class SimAssignmentService
             ]);
         }
 
-        return $this->fulfillPaidOrder($order);
+        if (! $this->activationDateIsDue($order)) {
+            return [
+                'assigned' => false,
+                'sim_type' => Esim::SIM_TYPE_ESIM,
+                'reason' => 'scheduled',
+                'activation_date' => $this->activationDateIso($order),
+                'order_id' => $order->id,
+            ];
+        }
+
+        $result = $this->assignForPaidOrder($order);
+
+        if (($result['assigned'] ?? false) && $this->orderIsPaid($order)) {
+            $result['recharge'] = $this->rechargeOrderSafely($order->fresh());
+        }
+
+        $result['activation_date'] = $this->activationDateIso($order);
+        $result['order_id'] = $order->id;
+
+        return $result;
+    }
+
+    /**
+     * Paid eSIM orders wait for the customer to confirm before a number is attached.
+     *
+     * @return array{
+     *     assigned: bool,
+     *     sim_type: string,
+     *     reason: string,
+     *     assignment?: UserEsim,
+     *     activation_date: ?string,
+     *     order_id: int
+     * }
+     */
+    public function deferEsimUntilUserConfirms(Order $order): array
+    {
+        $order->refresh();
+
+        if (! $this->orderIsPaid($order)) {
+            return [
+                'assigned' => false,
+                'sim_type' => Esim::SIM_TYPE_ESIM,
+                'reason' => 'payment_not_paid',
+                'activation_date' => $this->activationDateIso($order),
+                'order_id' => $order->id,
+            ];
+        }
+
+        $existing = $this->findAssignmentForOrder($order);
+        if ($existing) {
+            return [
+                'assigned' => true,
+                'sim_type' => Esim::SIM_TYPE_ESIM,
+                'reason' => 'already_assigned',
+                'assignment' => $existing->loadMissing(['esim', 'bundle', 'order', 'orderItem']),
+                'activation_date' => $this->activationDateIso($order),
+                'order_id' => $order->id,
+            ];
+        }
+
+        $due = $this->activationDateIsDue($order);
+        if ($due) {
+            $this->notifyAssignmentDue($order);
+        }
+
+        return [
+            'assigned' => false,
+            'sim_type' => Esim::SIM_TYPE_ESIM,
+            'reason' => $due ? 'awaiting_confirmation' : 'scheduled',
+            'activation_date' => $this->activationDateIso($order),
+            'order_id' => $order->id,
+        ];
+    }
+
+    /**
+     * Dashboard prompt for the latest paid eSIM order that still has no number.
+     *
+     * @return array{status: string, activation_date: ?string, order_id: int}|null
+     */
+    public function assignmentPromptForUser(int $userId): ?array
+    {
+        $order = $this->esimOrderLink->latestPaidOrderWithBundles($userId);
+        if (! $order || OrderCheckout::isTopUpOrder($order)) {
+            return null;
+        }
+
+        if ($this->orderSimType($order) !== Esim::SIM_TYPE_ESIM) {
+            return null;
+        }
+
+        if ($this->findAssignmentForOrder($order)) {
+            return null;
+        }
+
+        $due = $this->activationDateIsDue($order);
+        if ($due) {
+            $this->notifyAssignmentDue($order);
+        }
+
+        return [
+            'status' => $due ? 'awaiting_confirmation' : 'scheduled',
+            'activation_date' => $this->activationDateIso($order),
+            'order_id' => $order->id,
+        ];
+    }
+
+    public function notifyAssignmentDue(Order $order): void
+    {
+        $iso = $this->activationDateIso($order);
+        if ($iso === null || ! $this->activationDateIsDue($order)) {
+            return;
+        }
+
+        try {
+            $this->assignmentDueEmail->sendIfEligible($order, $iso);
+        } catch (\Throwable $e) {
+            Log::warning('eSIM assignment-due email dispatch failed', [
+                'order_id' => $order->id,
+                'user_id' => $order->user_id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    public function activationDateIso(Order $order): ?string
+    {
+        $order->loadMissing('trip');
+        $date = $order->trip?->arrival_date;
+        if ($date === null) {
+            return null;
+        }
+
+        return $date instanceof \DateTimeInterface
+            ? Carbon::instance(\DateTime::createFromInterface($date))->toDateString()
+            : Carbon::parse((string) $date)->toDateString();
+    }
+
+    public function activationDateIsDue(Order $order): bool
+    {
+        $iso = $this->activationDateIso($order);
+        if ($iso === null) {
+            return true;
+        }
+
+        return $iso <= now()->toDateString();
+    }
+
+    public function rescheduleActivationDate(Order $order, string $iso): Order
+    {
+        if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $iso)) {
+            throw ValidationException::withMessages([
+                'activation_date' => ['Choose a valid eSIM activation date.'],
+            ]);
+        }
+
+        if ($iso < now()->toDateString()) {
+            throw ValidationException::withMessages([
+                'activation_date' => ['eSIM activation date cannot be in the past.'],
+            ]);
+        }
+
+        if (OrderCheckout::isTopUpOrder($order) || $this->orderSimType($order) !== Esim::SIM_TYPE_ESIM) {
+            throw ValidationException::withMessages([
+                'activation_date' => ['This order does not use an eSIM activation date.'],
+            ]);
+        }
+
+        if ($this->findAssignmentForOrder($order)) {
+            throw ValidationException::withMessages([
+                'activation_date' => ['A number is already assigned for this order.'],
+            ]);
+        }
+
+        $order->loadMissing(['trip', 'orderItems']);
+        $trip = $order->trip;
+        if (! $trip) {
+            $trip = new Trip(['order_id' => $order->id]);
+        }
+
+        $oldArrival = $trip->arrival_date
+            ? Carbon::parse($trip->arrival_date)->startOfDay()
+            : null;
+        $oldDeparture = $trip->departure_date
+            ? Carbon::parse($trip->departure_date)->startOfDay()
+            : null;
+        $spanDays = ($oldArrival && $oldDeparture)
+            ? max(1, (int) $oldArrival->diffInDays($oldDeparture))
+            : 30;
+
+        $arrival = Carbon::parse($iso)->startOfDay();
+        $trip->arrival_date = $arrival->toDateString();
+        $trip->departure_date = $arrival->copy()->addDays($spanDays)->toDateString();
+        $trip->duration_days = $spanDays + 1;
+        $trip->order_id = $order->id;
+        $trip->save();
+
+        return $order->fresh(['trip']);
     }
 
     public function findAssignmentForOrder(Order $order): ?UserEsim

@@ -85,6 +85,7 @@ Route::prefix('me')->middleware('auth:sanctum')->group(function () {
     Route::post('/esims/{userEsim}/device-activated', [UserEsimController::class, 'markDeviceActivated'])->whereNumber('userEsim');
     Route::get('/esims/assignment-status', [UserEsimController::class, 'assignmentStatus']);
     Route::post('/esims/register', [UserEsimController::class, 'register']);
+    Route::patch('/esims/activation-date', [UserEsimController::class, 'updateActivationDate']);
     Route::get('/recharges', [UserEsimController::class, 'recharges']);
     Route::get('/usage', [UserEsimController::class, 'usage']);
     Route::get('/usage-details', [UserEsimController::class, 'usageDetails']);
